@@ -27,10 +27,6 @@ const SURAH_NAMES = {
   111:"Al-Masad",112:"Al-Ikhlas",113:"Al-Falaq",114:"An-Nas"
 };
 
-// Strip Arabic diacritics (tashkeel) for cleaner display
-function stripDiacritics(text) {
-  return text.replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g, "");
-}
 
 function shuffle(arr) {
   const a = [...arr];
@@ -122,14 +118,12 @@ export default function App() {
         const wordList = verse.words
           .filter(w => w.char_type_name === "word")
           .map(w => ({
-            arabic: stripDiacritics(w.text_uthmani || w.text_indopak || ""),
-            arabicFull: w.text_uthmani || "",
+            arabic: w.text_uthmani || w.text_indopak || "",
             meaning: w.translation?.text || "",
             transliteration: w.transliteration?.text || "",
           }));
-        const fullTranslation = verse.translations?.[0]?.text?.replace(/<[^>]+>/g, "") || "";
         const surahName = SURAH_NAMES[s] || `Surah ${s}`;
-        setVerseData({ wordList, fullTranslation, surahName, surah: s, ayah: a });
+        setVerseData({ wordList, surahName, surah: s, ayah: a });
       }
     } catch {
       setVerseError("Could not load verse. Please check your connection and try again.");
@@ -278,12 +272,6 @@ export default function App() {
                       </button>
                     );
                   })}
-                </div>
-
-                {/* Full translation */}
-                <div className="verse-full-translation">
-                  <span className="verse-translation-label">Full verse: </span>
-                  {verseData.fullTranslation}
                 </div>
 
                 {/* Confirm panel */}
