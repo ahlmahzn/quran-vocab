@@ -170,6 +170,7 @@ html, body {
 .toast.show { opacity: 1; transform: translateY(0); }
 .loading { text-align: center; padding: 60px; color: var(--muted); font-size: .9rem; }
 
+
 /* ── Verse lookup ── */
 .verse-lookup-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; align-items: end; }
 @media (max-width: 500px) { .verse-lookup-row { grid-template-columns: 1fr 1fr; } }
@@ -178,7 +179,7 @@ html, body {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 28px;
+  padding: 24px;
   margin-bottom: 20px;
 }
 .verse-reference {
@@ -186,7 +187,7 @@ html, body {
   font-size: .85rem;
   color: var(--gold);
   letter-spacing: .08em;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 .verse-hint {
   font-size: .78rem;
@@ -194,37 +195,73 @@ html, body {
   margin-bottom: 20px;
   font-style: italic;
 }
-.verse-arabic-words {
+
+/* Word-by-word grid */
+.wbw-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
   direction: rtl;
-  justify-content: flex-start;
   margin-bottom: 20px;
   padding: 16px;
   background: var(--card);
   border-radius: 10px;
   border: 1px solid var(--border);
 }
-.arabic-word-btn {
-  font-family: 'Amiri', serif;
-  font-size: 1.8rem;
-  color: var(--gold-light);
+.wbw-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 12px;
   background: var(--surface);
   border: 2px solid var(--border);
-  border-radius: 8px;
-  padding: 6px 12px;
+  border-radius: 10px;
   cursor: pointer;
   transition: all .2s;
   position: relative;
-  line-height: 1.3;
+  min-width: 70px;
+  direction: rtl;
 }
-.arabic-word-btn:hover { border-color: var(--gold); background: #261f10; transform: translateY(-2px); }
-.arabic-word-btn.selected { border-color: var(--gold); background: #261f10; box-shadow: 0 0 0 3px #c9a84c33; }
-.arabic-word-btn.already-added { border-color: var(--teal-dim); color: var(--teal); }
-.already-badge {
+.wbw-cell:hover { border-color: var(--gold); transform: translateY(-2px); box-shadow: 0 4px 12px #0004; }
+.wbw-cell.selected {
+  border-color: var(--gold);
+  background: #1e1708;
+  box-shadow: 0 0 0 3px #c9a84c33, 0 4px 16px #0006;
+  transform: translateY(-3px);
+}
+.wbw-cell.already-added { border-color: var(--teal-dim); }
+.wbw-arabic {
+  font-family: 'Amiri', serif;
+  font-size: 1.7rem;
+  color: var(--gold-light);
+  line-height: 1.2;
+  direction: rtl;
+}
+.wbw-cell.selected .wbw-arabic { color: var(--gold-light); }
+.wbw-translit {
+  font-size: .65rem;
+  color: var(--teal);
+  font-style: italic;
+  direction: ltr;
+  text-align: center;
+}
+.wbw-meaning {
+  font-size: .7rem;
+  color: var(--muted);
+  direction: ltr;
+  text-align: center;
+  line-height: 1.3;
+  transition: all .2s;
+}
+.wbw-meaning.highlighted {
+  color: var(--gold-light);
+  font-weight: 700;
+  font-size: .75rem;
+}
+.wbw-check {
   position: absolute;
-  top: -6px; right: -6px;
+  top: -6px; left: -6px;
   background: var(--teal);
   color: #fff;
   font-size: .6rem;
@@ -233,44 +270,65 @@ html, body {
   border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
 }
-.verse-transliteration {
-  font-size: .9rem;
-  color: var(--teal);
-  font-style: italic;
-  margin-bottom: 12px;
-  line-height: 1.7;
-}
-.verse-english {
-  font-size: .95rem;
+
+.verse-full-translation {
+  font-size: .88rem;
   color: var(--muted);
   line-height: 1.7;
   border-top: 1px solid var(--border);
   padding-top: 14px;
+  margin-bottom: 0;
+}
+.verse-translation-label {
+  color: var(--gold);
+  font-weight: 700;
+  font-size: .75rem;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  margin-right: 6px;
 }
 
-/* ── Word popup ── */
+/* Word popup */
 .word-popup {
-  margin-top: 24px;
+  margin-top: 20px;
   background: var(--card);
   border: 1px solid var(--gold);
   border-radius: var(--radius);
   padding: 20px;
 }
 .word-popup-header {
-  font-size: .72rem;
+  font-size: .75rem;
   text-transform: uppercase;
   letter-spacing: .1em;
   color: var(--muted);
-  margin-bottom: 6px;
+  margin-bottom: 14px;
+}
+.word-popup-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 16px;
+  direction: rtl;
+  flex-wrap: wrap;
 }
 .word-popup-arabic {
   font-family: 'Amiri', serif;
-  font-size: 2.5rem;
+  font-size: 2.8rem;
   color: var(--gold-light);
-  direction: rtl;
-  margin-bottom: 16px;
   line-height: 1;
+  direction: rtl;
 }
-.word-popup-fields { display: flex; flex-direction: column; gap: 12px; }
+.word-popup-meaning-block { direction: ltr; }
+.word-popup-meaning {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.word-popup-translit {
+  font-size: .85rem;
+  color: var(--teal);
+  font-style: italic;
+}
 .popup-btns { display: flex; gap: 10px; align-items: center; }
 .quiz-section-label { font-size: .78rem; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 8px; }

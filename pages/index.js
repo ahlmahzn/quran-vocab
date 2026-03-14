@@ -27,6 +27,11 @@ const SURAH_NAMES = {
   111:"Al-Masad",112:"Al-Ikhlas",113:"Al-Falaq",114:"An-Nas"
 };
 
+// Strip Arabic diacritics (tashkeel) for cleaner display
+function stripDiacritics(text) {
+  return text.replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g, "");
+}
+
 function shuffle(arr) {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
@@ -65,8 +70,7 @@ export default function App() {
   const [verseData, setVerseData] = useState(null);
   const [verseLoading, setVerseLoading] = useState(false);
   const [verseError, setVerseError] = useState("");
-  const [selectedWord, setSelectedWord] = useState(null);
-  const [wordMeaning, setWordMeaning] = useState("");
+  const [selectedWordIdx, setSelectedWordIdx] = useState(null);
   const [wordAddedBy, setWordAddedBy] = useState("");
   const [savingWord, setSavingWord] = useState(false);
 
@@ -92,6 +96,7 @@ export default function App() {
     setTimeout(() => setToast(""), 2500);
   };
 
+  // Fetch word-by-word data from Quran Foundation API
   const fetchVerse = async () => {
     const s = parseInt(surahNum);
     const a = parseInt(ayahNum);
@@ -102,21 +107,29 @@ export default function App() {
     setVerseLoading(true);
     setVerseError("");
     setVerseData(null);
-    setSelectedWord(null);
+    setSelectedWordIdx(null);
     try {
+      // Quran Foundation API — returns word-by-word with translation per word
       const res = await fetch(
-        `https://api.alquran.cloud/v1/ayah/${s}:${a}/editions/quran-uthmani,en.sahih,en.transliteration`
+        `https://api.quran.com/api/v4/verses/by_key/${s}:${a}?words=true&word_fields=text_uthmani,text_indopak&translations=131&transliteration=true`
       );
       const json = await res.json();
-      if (json.code !== 200 || !json.data || json.data.length < 3) {
+      if (!json.verse || !json.verse.words) {
         setVerseError("Verse not found. Please check the Surah and Ayah numbers.");
       } else {
-        const arabic = json.data[0].text;
-        const english = json.data[1].text;
-        const transliteration = json.data[2].text;
+        const verse = json.verse;
+        // Filter out non-word tokens (end marker etc.)
+        const wordList = verse.words
+          .filter(w => w.char_type_name === "word")
+          .map(w => ({
+            arabic: stripDiacritics(w.text_uthmani || w.text_indopak || ""),
+            arabicFull: w.text_uthmani || "",
+            meaning: w.translation?.text || "",
+            transliteration: w.transliteration?.text || "",
+          }));
+        const fullTranslation = verse.translations?.[0]?.text?.replace(/<[^>]+>/g, "") || "";
         const surahName = SURAH_NAMES[s] || `Surah ${s}`;
-        const arabicWords = arabic.split(" ").filter(w => w.trim());
-        setVerseData({ arabic, english, transliteration, arabicWords, surahName, surah: s, ayah: a });
+        setVerseData({ wordList, fullTranslation, surahName, surah: s, ayah: a });
       }
     } catch {
       setVerseError("Could not load verse. Please check your connection and try again.");
@@ -125,20 +138,21 @@ export default function App() {
   };
 
   const saveWord = async () => {
-    if (!selectedWord || !wordMeaning.trim()) return;
+    if (selectedWordIdx === null || !verseData) return;
+    const w = verseData.wordList[selectedWordIdx];
+    if (!w.meaning) return;
     setSavingWord(true);
-    const surahRef = verseData ? `${verseData.surahName} ${verseData.surah}:${verseData.ayah}` : "";
+    const surahRef = `${verseData.surahName} ${verseData.surah}:${verseData.ayah}`;
     const { error } = await supabase.from("words").insert([{
-      arabic: selectedWord.arabic,
-      meaning: wordMeaning.trim(),
+      arabic: w.arabic,
+      meaning: w.meaning,
       root: null,
       added_by: wordAddedBy.trim() || null,
       surah: surahRef,
     }]);
     if (!error) {
-      showToast("Word added! ✓");
-      setSelectedWord(null);
-      setWordMeaning("");
+      showToast(`"${w.arabic}" added! ✓`);
+      setSelectedWordIdx(null);
       await loadWords();
     } else {
       showToast("Error saving word");
@@ -190,6 +204,7 @@ export default function App() {
   };
 
   const contributors = words ? [...new Set(words.filter(w => w.added_by).map(w => w.added_by))] : [];
+  const selectedWord = selectedWordIdx !== null && verseData ? verseData.wordList[selectedWordIdx] : null;
 
   return (
     <>
@@ -208,14 +223,16 @@ export default function App() {
 
         {words === null && <div className="loading">Loading shared vocabulary…</div>}
 
+        {/* ── WORD LIST ── */}
         {words !== null && tab === "list" && <WordList words={words} onDelete={handleDelete} />}
 
+        {/* ── VERSE LOOKUP ── */}
         {words !== null && tab === "verse" && (
           <div>
             <div className="add-form">
               <h2>✦ Add Words from a Verse</h2>
               <p style={{color:"var(--muted)",fontSize:".88rem",marginBottom:18}}>
-                Enter a Surah and Ayah number to load the verse in Arabic, transliteration, and English. Then <strong style={{color:"var(--gold)"}}>tap any Arabic word</strong> to add it to the vocabulary list.
+                Enter a Surah and Ayah number, then <strong style={{color:"var(--gold)"}}>tap any Arabic word</strong> — its English meaning highlights automatically. Confirm to save it.
               </p>
               <div className="verse-lookup-row">
                 <div className="field">
@@ -242,56 +259,59 @@ export default function App() {
 
             {verseData && (
               <div className="verse-display">
-                <div className="verse-reference">
-                  {verseData.surahName} — Ayah {verseData.ayah}
-                </div>
-                <div className="verse-hint">Tap any word to add it to the vocabulary list</div>
+                <div className="verse-reference">{verseData.surahName} — Ayah {verseData.ayah}</div>
+                <div className="verse-hint">Tap any Arabic word to see its meaning and add it to the list</div>
 
-                <div className="verse-arabic-words">
-                  {verseData.arabicWords.map((word, i) => {
-                    const isSelected = selectedWord && selectedWord.index === i;
-                    const alreadyAdded = words.some(w => w.arabic === word);
+                {/* Word-by-word interactive display */}
+                <div className="wbw-grid">
+                  {verseData.wordList.map((w, i) => {
+                    const isSelected = selectedWordIdx === i;
+                    const alreadyAdded = words.some(wd => wd.arabic === w.arabic);
                     return (
                       <button key={i}
-                        className={`arabic-word-btn ${isSelected ? "selected" : ""} ${alreadyAdded ? "already-added" : ""}`}
-                        onClick={() => { setSelectedWord({ arabic: word, index: i }); setWordMeaning(""); }}
-                        title={alreadyAdded ? "Already in vocab list" : "Click to add this word"}>
-                        {word}
-                        {alreadyAdded && <span className="already-badge">✓</span>}
+                        className={`wbw-cell ${isSelected ? "selected" : ""} ${alreadyAdded ? "already-added" : ""}`}
+                        onClick={() => setSelectedWordIdx(isSelected ? null : i)}>
+                        <span className="wbw-arabic">{w.arabic}</span>
+                        <span className="wbw-translit">{w.transliteration}</span>
+                        <span className={`wbw-meaning ${isSelected ? "highlighted" : ""}`}>{w.meaning}</span>
+                        {alreadyAdded && <span className="wbw-check">✓</span>}
                       </button>
                     );
                   })}
                 </div>
 
-                <div className="verse-transliteration">{verseData.transliteration}</div>
-                <div className="verse-english">{verseData.english}</div>
+                {/* Full translation */}
+                <div className="verse-full-translation">
+                  <span className="verse-translation-label">Full verse: </span>
+                  {verseData.fullTranslation}
+                </div>
 
+                {/* Confirm panel */}
                 {selectedWord && (
                   <div className="word-popup">
-                    <div className="word-popup-header">Adding word:</div>
-                    <div className="word-popup-arabic">{selectedWord.arabic}</div>
-                    <div className="word-popup-fields">
-                      <div className="field">
-                        <label>Meaning *</label>
-                        <input placeholder="Enter the meaning in English"
-                          value={wordMeaning} onChange={e => setWordMeaning(e.target.value)}
-                          onKeyDown={e => e.key === "Enter" && saveWord()} autoFocus />
+                    <div className="word-popup-header">Add this word to the vocabulary list?</div>
+                    <div className="word-popup-row">
+                      <div className="word-popup-arabic">{selectedWord.arabic}</div>
+                      <div className="word-popup-meaning-block">
+                        <div className="word-popup-meaning">{selectedWord.meaning}</div>
+                        <div className="word-popup-translit">{selectedWord.transliteration}</div>
                       </div>
-                      <div className="field">
-                        <label>Your Name</label>
-                        <input placeholder="e.g. Fatima"
-                          value={wordAddedBy} onChange={e => setWordAddedBy(e.target.value)} />
-                      </div>
-                      <div className="popup-btns">
-                        <button className="submit-btn" onClick={saveWord}
-                          disabled={!wordMeaning.trim() || savingWord} style={{flex:1}}>
-                          {savingWord ? "Saving…" : "Add to Vocab List ✓"}
-                        </button>
-                        <button className="back-btn" onClick={() => setSelectedWord(null)}
-                          style={{padding:"10px 16px"}}>
-                          Cancel
-                        </button>
-                      </div>
+                    </div>
+                    <div className="field" style={{marginBottom:12}}>
+                      <label>Your Name (optional)</label>
+                      <input placeholder="e.g. Fatima"
+                        value={wordAddedBy} onChange={e => setWordAddedBy(e.target.value)}
+                        onKeyDown={e => e.key === "Enter" && saveWord()} />
+                    </div>
+                    <div className="popup-btns">
+                      <button className="submit-btn" onClick={saveWord}
+                        disabled={savingWord} style={{flex:1}}>
+                        {savingWord ? "Saving…" : "✓ Add to Vocab List"}
+                      </button>
+                      <button className="back-btn" onClick={() => setSelectedWordIdx(null)}
+                        style={{padding:"10px 16px"}}>
+                        Cancel
+                      </button>
                     </div>
                   </div>
                 )}
@@ -300,6 +320,7 @@ export default function App() {
           </div>
         )}
 
+        {/* ── MANUAL ADD ── */}
         {words !== null && tab === "add" && (
           <div className="add-form">
             <h2>✦ Add a Word Manually</h2>
@@ -307,7 +328,7 @@ export default function App() {
               <div className="form-row">
                 <div className="field">
                   <label>Arabic Word *</label>
-                  <input name="arabic" className="arabic" placeholder="كَتَبَ" required />
+                  <input name="arabic" className="arabic" placeholder="كتب" required />
                 </div>
                 <div className="field">
                   <label>Meaning *</label>
@@ -336,6 +357,7 @@ export default function App() {
           </div>
         )}
 
+        {/* ── QUIZ ── */}
         {words !== null && tab === "quiz" && (
           questions.length === 0 ? (
             <div className="quiz-setup">
