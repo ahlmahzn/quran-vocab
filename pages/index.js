@@ -1,6 +1,32 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabase";
 
+const SURAH_NAMES = {
+  1:"Al-Fatihah",2:"Al-Baqarah",3:"Ali 'Imran",4:"An-Nisa",5:"Al-Ma'idah",
+  6:"Al-An'am",7:"Al-A'raf",8:"Al-Anfal",9:"At-Tawbah",10:"Yunus",
+  11:"Hud",12:"Yusuf",13:"Ar-Ra'd",14:"Ibrahim",15:"Al-Hijr",
+  16:"An-Nahl",17:"Al-Isra",18:"Al-Kahf",19:"Maryam",20:"Ta-Ha",
+  21:"Al-Anbiya",22:"Al-Hajj",23:"Al-Mu'minun",24:"An-Nur",25:"Al-Furqan",
+  26:"Ash-Shu'ara",27:"An-Naml",28:"Al-Qasas",29:"Al-Ankabut",30:"Ar-Rum",
+  31:"Luqman",32:"As-Sajdah",33:"Al-Ahzab",34:"Saba",35:"Fatir",
+  36:"Ya-Sin",37:"As-Saffat",38:"Sad",39:"Az-Zumar",40:"Ghafir",
+  41:"Fussilat",42:"Ash-Shura",43:"Az-Zukhruf",44:"Ad-Dukhan",45:"Al-Jathiyah",
+  46:"Al-Ahqaf",47:"Muhammad",48:"Al-Fath",49:"Al-Hujurat",50:"Qaf",
+  51:"Adh-Dhariyat",52:"At-Tur",53:"An-Najm",54:"Al-Qamar",55:"Ar-Rahman",
+  56:"Al-Waqi'ah",57:"Al-Hadid",58:"Al-Mujadila",59:"Al-Hashr",60:"Al-Mumtahanah",
+  61:"As-Saf",62:"Al-Jumu'ah",63:"Al-Munafiqun",64:"At-Taghabun",65:"At-Talaq",
+  66:"At-Tahrim",67:"Al-Mulk",68:"Al-Qalam",69:"Al-Haqqah",70:"Al-Ma'arij",
+  71:"Nuh",72:"Al-Jinn",73:"Al-Muzzammil",74:"Al-Muddaththir",75:"Al-Qiyamah",
+  76:"Al-Insan",77:"Al-Mursalat",78:"An-Naba",79:"An-Nazi'at",80:"Abasa",
+  81:"At-Takwir",82:"Al-Infitar",83:"Al-Mutaffifin",84:"Al-Inshiqaq",85:"Al-Buruj",
+  86:"At-Tariq",87:"Al-A'la",88:"Al-Ghashiyah",89:"Al-Fajr",90:"Al-Balad",
+  91:"Ash-Shams",92:"Al-Layl",93:"Ad-Duhaa",94:"Ash-Sharh",95:"At-Tin",
+  96:"Al-Alaq",97:"Al-Qadr",98:"Al-Bayyinah",99:"Az-Zalzalah",100:"Al-Adiyat",
+  101:"Al-Qari'ah",102:"At-Takathur",103:"Al-Asr",104:"Al-Humazah",105:"Al-Fil",
+  106:"Quraysh",107:"Al-Ma'un",108:"Al-Kawthar",109:"Al-Kafirun",110:"An-Nasr",
+  111:"Al-Masad",112:"Al-Ikhlas",113:"Al-Falaq",114:"An-Nas"
+};
+
 function shuffle(arr) {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
@@ -23,9 +49,8 @@ export default function App() {
   const [tab, setTab] = useState("list");
   const [words, setWords] = useState(null);
   const [toast, setToast] = useState("");
-  const [adding, setAdding] = useState(false);
 
-  // quiz state
+  // quiz
   const [questions, setQuestions] = useState([]);
   const [qIndex, setQIndex] = useState(0);
   const [selected, setSelected] = useState(null);
@@ -34,18 +59,26 @@ export default function App() {
   const [quizCount, setQuizCount] = useState(20);
   const [quizFilter, setQuizFilter] = useState("all");
 
+  // verse lookup
+  const [surahNum, setSurahNum] = useState("");
+  const [ayahNum, setAyahNum] = useState("");
+  const [verseData, setVerseData] = useState(null);
+  const [verseLoading, setVerseLoading] = useState(false);
+  const [verseError, setVerseError] = useState("");
+  const [selectedWord, setSelectedWord] = useState(null);
+  const [wordMeaning, setWordMeaning] = useState("");
+  const [wordAddedBy, setWordAddedBy] = useState("");
+  const [savingWord, setSavingWord] = useState(false);
+
   const loadWords = useCallback(async () => {
     const { data, error } = await supabase
-      .from("words")
-      .select("*")
-      .order("created_at", { ascending: false });
+      .from("words").select("*").order("created_at", { ascending: false });
     if (!error) setWords(data || []);
     else { console.error(error); setWords([]); }
   }, []);
 
   useEffect(() => { loadWords(); }, [loadWords]);
 
-  // Realtime subscription
   useEffect(() => {
     const channel = supabase
       .channel("words-changes")
@@ -59,20 +92,74 @@ export default function App() {
     setTimeout(() => setToast(""), 2500);
   };
 
-  const handleAdd = async (e) => {
+  const fetchVerse = async () => {
+    const s = parseInt(surahNum);
+    const a = parseInt(ayahNum);
+    if (!s || !a || s < 1 || s > 114 || a < 1) {
+      setVerseError("Please enter a valid Surah (1–114) and Ayah number.");
+      return;
+    }
+    setVerseLoading(true);
+    setVerseError("");
+    setVerseData(null);
+    setSelectedWord(null);
+    try {
+      const res = await fetch(
+        `https://api.alquran.cloud/v1/ayah/${s}:${a}/editions/quran-uthmani,en.sahih,en.transliteration`
+      );
+      const json = await res.json();
+      if (json.code !== 200 || !json.data || json.data.length < 3) {
+        setVerseError("Verse not found. Please check the Surah and Ayah numbers.");
+      } else {
+        const arabic = json.data[0].text;
+        const english = json.data[1].text;
+        const transliteration = json.data[2].text;
+        const surahName = SURAH_NAMES[s] || `Surah ${s}`;
+        const arabicWords = arabic.split(" ").filter(w => w.trim());
+        setVerseData({ arabic, english, transliteration, arabicWords, surahName, surah: s, ayah: a });
+      }
+    } catch {
+      setVerseError("Could not load verse. Please check your connection and try again.");
+    }
+    setVerseLoading(false);
+  };
+
+  const saveWord = async () => {
+    if (!selectedWord || !wordMeaning.trim()) return;
+    setSavingWord(true);
+    const surahRef = verseData ? `${verseData.surahName} ${verseData.surah}:${verseData.ayah}` : "";
+    const { error } = await supabase.from("words").insert([{
+      arabic: selectedWord.arabic,
+      meaning: wordMeaning.trim(),
+      root: null,
+      added_by: wordAddedBy.trim() || null,
+      surah: surahRef,
+    }]);
+    if (!error) {
+      showToast("Word added! ✓");
+      setSelectedWord(null);
+      setWordMeaning("");
+      await loadWords();
+    } else {
+      showToast("Error saving word");
+    }
+    setSavingWord(false);
+  };
+
+  const handleManualAdd = async (e) => {
     e.preventDefault();
-    setAdding(true);
     const fd = new FormData(e.target);
     const arabic = fd.get("arabic").trim();
     const meaning = fd.get("meaning").trim();
     const root = fd.get("root").trim();
     const added_by = fd.get("addedBy").trim();
     const surah = fd.get("surah").trim();
-    if (!arabic || !meaning) { setAdding(false); return; }
-    const { error } = await supabase.from("words").insert([{ arabic, meaning, root: root || null, added_by: added_by || null, surah: surah || null }]);
+    if (!arabic || !meaning) return;
+    const { error } = await supabase.from("words").insert([{
+      arabic, meaning, root: root || null, added_by: added_by || null, surah: surah || null
+    }]);
     if (!error) { e.target.reset(); showToast("Word added! ✓"); await loadWords(); }
     else showToast("Error adding word");
-    setAdding(false);
   };
 
   const handleDelete = async (id) => {
@@ -86,11 +173,7 @@ export default function App() {
     if (pool.length < 4) { showToast("Need at least 4 words to quiz!"); return; }
     const count = Math.min(quizCount, pool.length);
     const qs = buildQuestions(shuffle(pool).slice(0, count));
-    setQuestions(qs);
-    setQIndex(0);
-    setSelected(null);
-    setAnswers([]);
-    setQuizDone(false);
+    setQuestions(qs); setQIndex(0); setSelected(null); setAnswers([]); setQuizDone(false);
   };
 
   const handleAnswer = (opt) => {
@@ -118,7 +201,7 @@ export default function App() {
         </header>
 
         <nav className="tabs">
-          {[["list","📖 Word List"],["add","✏️ Add Word"],["quiz","🌙 Quiz"]].map(([id, label]) => (
+          {[["list","📖 Word List"],["verse","🔍 Verse Lookup"],["add","✏️ Add Manually"],["quiz","🌙 Quiz"]].map(([id, label]) => (
             <button key={id} className={`tab ${tab===id?"active":""}`} onClick={() => { setTab(id); setQuestions([]); }}>{label}</button>
           ))}
         </nav>
@@ -127,10 +210,100 @@ export default function App() {
 
         {words !== null && tab === "list" && <WordList words={words} onDelete={handleDelete} />}
 
+        {words !== null && tab === "verse" && (
+          <div>
+            <div className="add-form">
+              <h2>✦ Add Words from a Verse</h2>
+              <p style={{color:"var(--muted)",fontSize:".88rem",marginBottom:18}}>
+                Enter a Surah and Ayah number to load the verse in Arabic, transliteration, and English. Then <strong style={{color:"var(--gold)"}}>tap any Arabic word</strong> to add it to the vocabulary list.
+              </p>
+              <div className="verse-lookup-row">
+                <div className="field">
+                  <label>Surah (1–114)</label>
+                  <input type="number" min="1" max="114" value={surahNum}
+                    onChange={e => setSurahNum(e.target.value)} placeholder="e.g. 2"
+                    onKeyDown={e => e.key === "Enter" && fetchVerse()} />
+                </div>
+                <div className="field">
+                  <label>Ayah Number</label>
+                  <input type="number" min="1" value={ayahNum}
+                    onChange={e => setAyahNum(e.target.value)} placeholder="e.g. 255"
+                    onKeyDown={e => e.key === "Enter" && fetchVerse()} />
+                </div>
+                <div className="field">
+                  <label>&nbsp;</label>
+                  <button className="submit-btn" onClick={fetchVerse} disabled={verseLoading}>
+                    {verseLoading ? "Loading…" : "Load Verse"}
+                  </button>
+                </div>
+              </div>
+              {verseError && <p style={{color:"var(--rose)",fontSize:".88rem",marginTop:10}}>{verseError}</p>}
+            </div>
+
+            {verseData && (
+              <div className="verse-display">
+                <div className="verse-reference">
+                  {verseData.surahName} — Ayah {verseData.ayah}
+                </div>
+                <div className="verse-hint">Tap any word to add it to the vocabulary list</div>
+
+                <div className="verse-arabic-words">
+                  {verseData.arabicWords.map((word, i) => {
+                    const isSelected = selectedWord && selectedWord.index === i;
+                    const alreadyAdded = words.some(w => w.arabic === word);
+                    return (
+                      <button key={i}
+                        className={`arabic-word-btn ${isSelected ? "selected" : ""} ${alreadyAdded ? "already-added" : ""}`}
+                        onClick={() => { setSelectedWord({ arabic: word, index: i }); setWordMeaning(""); }}
+                        title={alreadyAdded ? "Already in vocab list" : "Click to add this word"}>
+                        {word}
+                        {alreadyAdded && <span className="already-badge">✓</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="verse-transliteration">{verseData.transliteration}</div>
+                <div className="verse-english">{verseData.english}</div>
+
+                {selectedWord && (
+                  <div className="word-popup">
+                    <div className="word-popup-header">Adding word:</div>
+                    <div className="word-popup-arabic">{selectedWord.arabic}</div>
+                    <div className="word-popup-fields">
+                      <div className="field">
+                        <label>Meaning *</label>
+                        <input placeholder="Enter the meaning in English"
+                          value={wordMeaning} onChange={e => setWordMeaning(e.target.value)}
+                          onKeyDown={e => e.key === "Enter" && saveWord()} autoFocus />
+                      </div>
+                      <div className="field">
+                        <label>Your Name</label>
+                        <input placeholder="e.g. Fatima"
+                          value={wordAddedBy} onChange={e => setWordAddedBy(e.target.value)} />
+                      </div>
+                      <div className="popup-btns">
+                        <button className="submit-btn" onClick={saveWord}
+                          disabled={!wordMeaning.trim() || savingWord} style={{flex:1}}>
+                          {savingWord ? "Saving…" : "Add to Vocab List ✓"}
+                        </button>
+                        <button className="back-btn" onClick={() => setSelectedWord(null)}
+                          style={{padding:"10px 16px"}}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {words !== null && tab === "add" && (
           <div className="add-form">
-            <h2>✦ Add a New Word</h2>
-            <form onSubmit={handleAdd}>
+            <h2>✦ Add a Word Manually</h2>
+            <form onSubmit={handleManualAdd}>
               <div className="form-row">
                 <div className="field">
                   <label>Arabic Word *</label>
@@ -152,13 +325,11 @@ export default function App() {
                 </div>
                 <div className="field">
                   <label>Surah / Source</label>
-                  <input name="surah" placeholder="e.g. Al-Baqarah 2:2" />
+                  <input name="surah" placeholder="e.g. Al-Baqarah 2:255" />
                 </div>
                 <div className="field">
                   <label>&nbsp;</label>
-                  <button type="submit" className="submit-btn" disabled={adding}>
-                    {adding ? "Adding…" : "Add Word"}
-                  </button>
+                  <button type="submit" className="submit-btn" style={{width:"100%"}}>Add Word</button>
                 </div>
               </div>
             </form>
@@ -170,12 +341,12 @@ export default function App() {
             <div className="quiz-setup">
               <h2>✦ Vocabulary Quiz</h2>
               <p>Test yourself on the group&apos;s collected words</p>
-              {(words.length < 4) ? (
+              {words.length < 4 ? (
                 <p style={{color:"var(--rose)"}}>Add at least 4 words before starting a quiz.</p>
               ) : (
                 <>
                   <div style={{marginBottom:16}}>
-                    <div style={{fontSize:".78rem",color:"var(--muted)",textTransform:"uppercase",letterSpacing:".08em",marginBottom:8}}>Number of questions</div>
+                    <div className="quiz-section-label">Number of questions</div>
                     <div className="quiz-options">
                       {[10,20,30,"All"].map(n => (
                         <button key={n} className={`quiz-option-btn ${quizCount===(n==="All"?9999:n)?"selected":""}`}
@@ -185,7 +356,7 @@ export default function App() {
                   </div>
                   {contributors.length > 1 && (
                     <div style={{marginBottom:20}}>
-                      <div style={{fontSize:".78rem",color:"var(--muted)",textTransform:"uppercase",letterSpacing:".08em",marginBottom:8}}>Filter by contributor</div>
+                      <div className="quiz-section-label">Filter by contributor</div>
                       <div className="quiz-options">
                         <button className={`quiz-option-btn ${quizFilter==="all"?"selected":""}`} onClick={() => setQuizFilter("all")}>All</button>
                         {contributors.map(c => (
@@ -289,9 +460,7 @@ function Results({ answers, onRetry, onBack }) {
   const grade = pct === 100 ? "Perfect! ماشاء الله" : pct >= 80 ? "Excellent! 🌟" : pct >= 60 ? "Good effort! Keep going" : "Keep reviewing!";
   return (
     <div className="results">
-      <div className="score-circle">
-        <div className="score-number">{pct}%</div>
-      </div>
+      <div className="score-circle"><div className="score-number">{pct}%</div></div>
       <h2>{grade}</h2>
       <p>{correct} of {answers.length} correct</p>
       <div className="result-list">
