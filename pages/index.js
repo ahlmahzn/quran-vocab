@@ -45,13 +45,37 @@ function buildQuestions(words) {
   });
 }
 
-function playWordAudio(surah, ayah, wordPosition) {
+function playAudio(url) {
+  if (!url) return;
   try {
-    const key = `${String(surah).padStart(3,"0")}${String(ayah).padStart(3,"0")}${String(wordPosition).padStart(3,"0")}`;
-    const url = `https://audio.qurancdn.com/wbw/en/omar_hisham_al_arabi/${key}.mp3`;
     const audio = new Audio(url);
     audio.play().catch(() => {});
   } catch {}
+}
+
+
+// Basic Arabic → Latin transliteration map
+const AR_MAP = {
+  'ا':'a','أ':'a','إ':'i','آ':'aa','ب':'b','ت':'t','ث':'th','ج':'j','ح':'h',
+  'خ':'kh','د':'d','ذ':'dh','ر':'r','ز':'z','س':'s','ش':'sh','ص':'s',
+  'ض':'d','ط':'t','ظ':'z','ع':"'",'غ':'gh','ف':'f','ق':'q','ك':'k',
+  'ل':'l','م':'m','ن':'n','ه':'h','و':'w','ي':'y','ى':'a','ة':'a',
+  'ئ':'y','ؤ':'w','لا':'la',
+  // diacritics
+  'َ':'a','ِ':'i','ُ':'u','ً':'an','ٍ':'in','ٌ':'un','ّ':'','ْ':'',
+};
+function arabicToTranslit(text) {
+  if (!text) return "";
+  let result = "";
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    // skip non-Arabic
+    if (ch.charCodeAt(0) < 0x0600 || ch.charCodeAt(0) > 0x06FF) continue;
+    result += AR_MAP[ch] || "";
+  }
+  // Clean up double vowels, tidy spacing
+  return result.replace(/(.)+/g, (m,c) => ['a','i','u'].includes(c) ? c+c : c)
+               .replace(/\s+/g,' ').trim();
 }
 
 // Parse "SurahName S:A" → {surah, ayah} e.g. "Al-Baqarah 2:255" → {surah:2,ayah:255}
@@ -138,7 +162,7 @@ export default function App() {
     setSelectedWordIdx(null);
     try {
       const res = await fetch(
-        `https://api.quran.com/api/v4/verses/by_key/${s}:${a}?words=true&word_fields=text_uthmani,text_indopak&translations=131&transliteration=true`
+        `https://api.quran.com/api/v4/verses/by_key/${s}:${a}?words=true&word_fields=text_uthmani,text_indopak,audio&translations=131&transliteration=true`
       );
       const json = await res.json();
       if (!json.verse || !json.verse.words) {
@@ -152,6 +176,7 @@ export default function App() {
             meaning: w.translation?.text || "",
             transliteration: w.transliteration?.text || "",
             position: i + 1,
+            audioUrl: w.audio?.url ? `https://audio.qurancdn.com/${w.audio.url}` : null,
           }));
         const surahName = SURAH_NAMES[s] || `Surah ${s}`;
         setVerseData({ wordList, surahName, surah: s, ayah: a });
@@ -163,10 +188,17 @@ export default function App() {
   };
 
   const handleWordClick = (i) => {
-    // Always play audio on every click
+    // Play audio using URL from API
     if (verseData) {
+      const word = verseData.wordList[i];
       setPlayingIdx(i);
-      playWordAudio(verseData.surah, verseData.ayah, verseData.wordList[i].position);
+      if (word.audioUrl) {
+        playAudio(word.audioUrl);
+      } else {
+        // Fallback: construct URL manually
+        const key = `${String(verseData.surah).padStart(3,"0")}${String(verseData.ayah).padStart(3,"0")}${String(word.position).padStart(3,"0")}`;
+        playAudio(`https://audio.qurancdn.com/wbw/en/omar_hisham_al_arabi/${key}.mp3`);
+      }
       setTimeout(() => setPlayingIdx(null), 1500);
     }
     // Select (or deselect) the word for adding
@@ -585,6 +617,7 @@ function FlashcardGame({ words, onBack }) {
   const [flipped, setFlipped] = useState(false);
   const [scores, setScores] = useState({ know: 0, review: 0 });
   const [done, setDone] = useState(false);
+  const [playing, setPlaying] = useState(false);
   const card = deck[index];
 
   const rate = (knew) => {
@@ -592,6 +625,36 @@ function FlashcardGame({ words, onBack }) {
     if (index + 1 >= deck.length) setDone(true);
     else { setIndex(i => i + 1); setFlipped(false); }
   };
+
+  const handleAudio = (e) => {
+    e.stopPropagation(); // don't flip card
+    if (!card.surah) return;
+    const ref = parseSurahRef(card.surah);
+    if (!ref) return;
+    // Find word position by searching vocab words with same surah
+    // Use constructed URL as best effort
+    const arabicWords = card.arabic;
+    setPlaying(true);
+    setTimeout(() => setPlaying(false), 1800);
+    // Try to fetch audio URL from API
+    fetch(`https://api.quran.com/api/v4/verses/by_key/${ref.surah}:${ref.ayah}?words=true&word_fields=text_uthmani,audio`)
+      .then(r => r.json())
+      .then(json => {
+        const allWords = json.verse?.words?.filter(w => w.char_type_name === "word") || [];
+        const stripDia = s => s.replace(/[ؐ-ًؚ-ٰٟۖ-ۜ۟-۪ۤۧۨ-ۭ]/g,"");
+        const match = allWords.find(w =>
+          w.text_uthmani === arabicWords ||
+          stripDia(w.text_uthmani||"") === stripDia(arabicWords)
+        );
+        if (match?.audio?.url) {
+          playAudio(`https://audio.qurancdn.com/${match.audio.url}`);
+        }
+      })
+      .catch(() => {});
+  };
+
+  // Get transliteration — from saved field or generate on the fly
+  const translit = card.transliteration || arabicToTranslit(card.arabic);
 
   if (done) return (
     <div className="results">
@@ -611,9 +674,14 @@ function FlashcardGame({ words, onBack }) {
       <div className={`flashcard ${flipped?"flipped":""}`} onClick={() => setFlipped(f => !f)}>
         <div className="flashcard-inner">
           <div className="flashcard-front">
+            {card.surah && parseSurahRef(card.surah) && (
+              <button className={`fc-audio-btn ${playing?"fc-audio-playing":""}`} onClick={handleAudio} title="Hear pronunciation">
+                {playing ? "🔊" : "🔈"}
+              </button>
+            )}
             <div className="fc-arabic">{card.arabic}</div>
-            {card.transliteration && <div className="fc-translit">{card.transliteration}</div>}
-            <div className="fc-tap-hint">tap to reveal meaning</div>
+            <div className="fc-translit">{translit}</div>
+            <div className="fc-tap-hint">tap anywhere to reveal meaning</div>
           </div>
           <div className="flashcard-back">
             <div className="fc-label">Meaning</div>
