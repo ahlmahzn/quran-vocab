@@ -67,6 +67,20 @@ export default function App() {
   const [words, setWords] = useState(null);
   const [toast, setToast] = useState("");
 
+  // persisted user name
+  const [userName, setUserName] = useState(() => {
+    try { return localStorage.getItem("quran-vocab-username") || ""; } catch { return ""; }
+  });
+  const [showNamePrompt, setShowNamePrompt] = useState(false);
+  const [nameInput, setNameInput] = useState("");
+
+  const saveName = (name) => {
+    const trimmed = name.trim();
+    setUserName(trimmed);
+    try { localStorage.setItem("quran-vocab-username", trimmed); } catch {}
+    setShowNamePrompt(false);
+  };
+
   // quiz
   const [questions, setQuestions] = useState([]);
   const [qIndex, setQIndex] = useState(0);
@@ -84,6 +98,8 @@ export default function App() {
   const [verseError, setVerseError] = useState("");
   const [selectedWordIdx, setSelectedWordIdx] = useState(null);
   const [wordAddedBy, setWordAddedBy] = useState("");
+  // sync wordAddedBy with userName whenever verse tab opens
+  useEffect(() => { setWordAddedBy(userName); }, [userName, tab]);
   const [savingWord, setSavingWord] = useState(false);
   const [playingIdx, setPlayingIdx] = useState(null);
 
@@ -147,11 +163,13 @@ export default function App() {
   };
 
   const handleWordClick = (i) => {
+    // Always play audio on every click
     if (verseData) {
       setPlayingIdx(i);
       playWordAudio(verseData.surah, verseData.ayah, verseData.wordList[i].position);
-      setTimeout(() => setPlayingIdx(null), 1200);
+      setTimeout(() => setPlayingIdx(null), 1500);
     }
+    // Select (or deselect) the word for adding
     setSelectedWordIdx(prev => prev === i ? null : i);
   };
 
@@ -163,7 +181,7 @@ export default function App() {
     const surahRef = `${verseData.surahName} ${verseData.surah}:${verseData.ayah}`;
     const { error } = await supabase.from("words").insert([{
       arabic: w.arabic, meaning: w.meaning, root: null,
-      added_by: wordAddedBy.trim() || null, surah: surahRef,
+      added_by: (wordAddedBy.trim() || userName || null), surah: surahRef,
     }]);
     if (!error) {
       showToast(`"${w.arabic}" added! ✓`);
@@ -223,20 +241,47 @@ export default function App() {
     <>
       <div className="app">
         <header className="header">
-          <div className="header-ornament">﷽</div>
           <h1>Quran Vocabulary</h1>
-          <p>Daily words · Group study · Shared learning</p>
+          <div className="header-user">
+            {userName
+              ? <button className="user-badge" onClick={() => { setNameInput(userName); setShowNamePrompt(true); }}>👤 {userName} <span className="user-edit">✏️</span></button>
+              : <button className="user-badge user-badge-empty" onClick={() => { setNameInput(""); setShowNamePrompt(true); }}>👤 Set your name</button>
+            }
+          </div>
         </header>
 
+        {/* Name prompt modal */}
+        {showNamePrompt && (
+          <div className="modal-overlay" onClick={() => setShowNamePrompt(false)}>
+            <div className="modal" onClick={e => e.stopPropagation()}>
+              <h3 className="modal-title">Who are you?</h3>
+              <p className="modal-desc">Your name will be saved on this device and automatically tagged to every word you add.</p>
+              <input
+                className="modal-input"
+                placeholder="Enter your name…"
+                value={nameInput}
+                onChange={e => setNameInput(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && nameInput.trim() && saveName(nameInput)}
+                autoFocus
+              />
+              <div className="modal-btns">
+                <button className="submit-btn" onClick={() => saveName(nameInput)} disabled={!nameInput.trim()} style={{flex:1}}>Save Name</button>
+                {userName && <button className="back-btn" onClick={() => { saveName(""); }} style={{padding:"10px 14px"}}>Clear</button>}
+                <button className="back-btn" onClick={() => setShowNamePrompt(false)} style={{padding:"10px 14px"}}>Cancel</button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <nav className="tabs">
-          {[["list","📖 Words"],["verse","🔍 Verse"],["add","✏️ Add"],["quiz","🌙 Quiz"],["games","🎮 Games"]].map(([id, label]) => (
+          {[["list","📖 List"],["verse","➕ Add"],["quiz","🌙 Quiz"],["games","🎯 Practice"]].map(([id, label]) => (
             <button key={id} className={`tab ${tab===id?"active":""}`} onClick={() => { setTab(id); setQuestions([]); }}>{label}</button>
           ))}
         </nav>
 
         {words === null && <div className="loading">Loading shared vocabulary…</div>}
 
-        {words !== null && tab === "list" && <WordList words={words} onDelete={handleDelete} />}
+        {words !== null && tab === "list" && <WordList words={words} onDelete={handleDelete} userName={userName} />}
 
         {words !== null && tab === "verse" && (
           <div>
@@ -300,12 +345,17 @@ export default function App() {
                         <div className="word-popup-translit">{selectedWord.transliteration}</div>
                       </div>
                     </div>
-                    <div className="field" style={{marginBottom:12}}>
-                      <label>Your Name (optional)</label>
-                      <input placeholder="e.g. Fatima" value={wordAddedBy}
-                        onChange={e => setWordAddedBy(e.target.value)}
-                        onKeyDown={e => e.key === "Enter" && saveWord()} />
-                    </div>
+                    {!userName && (
+                      <div className="field" style={{marginBottom:12}}>
+                        <label>Your Name (optional)</label>
+                        <input placeholder="e.g. Fatima" value={wordAddedBy}
+                          onChange={e => setWordAddedBy(e.target.value)}
+                          onKeyDown={e => e.key === "Enter" && saveWord()} />
+                      </div>
+                    )}
+                    {userName && (
+                      <div className="modal-desc" style={{marginBottom:12}}>Adding as: <strong>{userName}</strong></div>
+                    )}
                     <div className="popup-btns">
                       <button className="submit-btn" onClick={saveWord} disabled={savingWord} style={{flex:1}}>
                         {savingWord ? "Saving…" : "✓ Add to Vocab List"}
@@ -319,23 +369,7 @@ export default function App() {
           </div>
         )}
 
-        {words !== null && tab === "add" && (
-          <div className="add-form">
-            <h2>✦ Add a Word Manually</h2>
-            <form onSubmit={handleManualAdd}>
-              <div className="form-row">
-                <div className="field"><label>Arabic Word *</label><input name="arabic" className="arabic" placeholder="كَتَبَ" required /></div>
-                <div className="field"><label>Meaning *</label><input name="meaning" placeholder="he wrote" required /></div>
-                <div className="field"><label>Root (optional)</label><input name="root" className="arabic" placeholder="ك ت ب" /></div>
-              </div>
-              <div className="form-row-2">
-                <div className="field"><label>Your Name</label><input name="addedBy" placeholder="e.g. Fatima" /></div>
-                <div className="field"><label>Surah / Source</label><input name="surah" placeholder="e.g. Al-Baqarah 2:255" /></div>
-                <div className="field"><label>&nbsp;</label><button type="submit" className="submit-btn" style={{width:"100%"}}>Add Word</button></div>
-              </div>
-            </form>
-          </div>
-        )}
+
 
         {words !== null && tab === "quiz" && (
           questions.length === 0 ? (
@@ -377,7 +411,7 @@ export default function App() {
           )
         )}
 
-        {words !== null && tab === "games" && <Games words={words} />}
+        {words !== null && tab === "games" && <Games words={words} userName={userName} />}
       </div>
       <div className={`toast ${toast?"show":""}`}>{toast}</div>
     </>
@@ -385,13 +419,15 @@ export default function App() {
 }
 
 // ── Word List ─────────────────────────────────────────────────────────────────
-function WordList({ words, onDelete }) {
+function WordList({ words, onDelete, userName }) {
   const [search, setSearch] = useState("");
   const [dayFilter, setDayFilter] = useState("all");
   const [customDays, setCustomDays] = useState("");
+  const [myWords, setMyWords] = useState(false);
   const now = new Date();
 
   const filtered = words.filter(w => {
+    if (myWords && userName && w.added_by !== userName) return false;
     if (dayFilter !== "all") {
       const days = dayFilter === "custom" ? parseInt(customDays) : parseInt(dayFilter);
       if (!isNaN(days) && days > 0) {
@@ -424,6 +460,11 @@ function WordList({ words, onDelete }) {
             <span className="filter-label">days</span>
           </div>
         )}
+        {userName && (
+          <button className={`filter-btn ${myWords?"active":""}`} onClick={() => setMyWords(m => !m)}>
+            👤 My words
+          </button>
+        )}
       </div>
       <div className="search-bar">
         <span className="search-icon">🔍</span>
@@ -455,13 +496,15 @@ function WordList({ words, onDelete }) {
 }
 
 // ── Games Hub ─────────────────────────────────────────────────────────────────
-function Games({ words }) {
+function Games({ words, userName }) {
   const [game, setGame] = useState(null);
   const [dayFilter, setDayFilter] = useState("all");
   const [customDays, setCustomDays] = useState("");
+  const [myWords, setMyWords] = useState(false);
   const now = new Date();
 
   const pool = words.filter(w => {
+    if (myWords && userName && w.added_by !== userName) return false;
     if (dayFilter === "all") return true;
     const days = dayFilter === "custom" ? parseInt(customDays) : parseInt(dayFilter);
     if (!isNaN(days) && days > 0) {
@@ -494,6 +537,11 @@ function Games({ words }) {
               <input type="number" min="1" max="365" value={customDays} onChange={e => setCustomDays(e.target.value)} placeholder="days" />
               <span className="filter-label">days</span>
             </div>
+          )}
+          {userName && (
+            <button className={`filter-btn ${myWords?"active":""}`} onClick={() => setMyWords(m => !m)}>
+              👤 My words
+            </button>
           )}
         </div>
         <p style={{color:"var(--teal)",fontSize:".82rem",marginTop:10}}>{pool.length} word{pool.length!==1?"s":""} in pool · {verseWords.length} with verse references</p>
@@ -563,10 +611,8 @@ function FlashcardGame({ words, onBack }) {
       <div className={`flashcard ${flipped?"flipped":""}`} onClick={() => setFlipped(f => !f)}>
         <div className="flashcard-inner">
           <div className="flashcard-front">
-            <div className="fc-label">Arabic</div>
             <div className="fc-arabic">{card.arabic}</div>
             {card.transliteration && <div className="fc-translit">{card.transliteration}</div>}
-            {card.surah && <div className="fc-surah">{card.surah}</div>}
             <div className="fc-tap-hint">tap to reveal meaning</div>
           </div>
           <div className="flashcard-back">
@@ -676,9 +722,10 @@ function MatchGame({ words, onBack }) {
 }
 
 // ── Speed Round ───────────────────────────────────────────────────────────────
-const SPEED_TIME = 7; // seconds per word
+const SPEED_TIME = 10; // seconds per word
 const SPEED_LIVES = 3;
 const SPEED_ROUNDS = 10;
+const SPEED_OPTIONS = 3;
 
 function SpeedRound({ words, onBack }) {
   const [deck] = useState(() => shuffle([...words]).slice(0, SPEED_ROUNDS));
@@ -695,7 +742,7 @@ function SpeedRound({ words, onBack }) {
   const buildOptions = useCallback((idx) => {
     const word = deck[idx];
     const others = words.filter(w => w.id !== word.id);
-    const distractors = shuffle(others).slice(0, 3).map(w => w.meaning);
+    const distractors = shuffle(others).slice(0, SPEED_OPTIONS - 1).map(w => w.meaning);
     return shuffle([word.meaning, ...distractors]);
   }, [deck, words]);
 
@@ -1008,7 +1055,7 @@ function QuizQuestion({ q, total, index, selected, onAnswer }) {
         <div className="quiz-question-label">What does this word mean?</div>
         <div className="quiz-arabic">{q.word.arabic}</div>
         {q.word.surah && <div className="quiz-surah">{q.word.surah}</div>}
-        <div className="answer-grid">
+        <div className="answer-grid four-opts">
           {q.options.map(opt => {
             let cls = "answer-btn";
             if (selected) { if (opt===q.correct) cls+=" correct"; else if (opt===selected) cls+=" wrong"; }
