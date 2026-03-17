@@ -45,17 +45,14 @@ function buildQuestions(words) {
   });
 }
 
-// Play audio from quran.com CDN (proper Quranic recitation)
-function playWordAudioUrl(url) {
-  if (!url) return false;
-  try {
-    const audio = new Audio(url);
-    audio.play().catch(() => {});
-    return true;
-  } catch { return false; }
+// Play word audio via our own Vercel proxy (bypasses CORS)
+function playWordAudio(surah, ayah, position) {
+  const url = `/api/audio?surah=${surah}&ayah=${ayah}&word=${position}`;
+  const audio = new Audio(url);
+  audio.play().catch(() => speakArabic(null));
 }
 
-// Fallback: Web Speech API with Arabic TTS
+// TTS fallback when no position info is available
 function speakArabic(text) {
   if (!text || typeof window === "undefined") return;
   try {
@@ -176,7 +173,7 @@ export default function App() {
     setSelectedWordIdx(null);
     try {
       const res = await fetch(
-        `https://api.quran.com/api/v4/verses/by_key/${s}:${a}?words=true&word_fields=text_uthmani,text_indopak,audio_url&translations=131&transliteration=true`
+        `https://api.quran.com/api/v4/verses/by_key/${s}:${a}?words=true&word_fields=text_uthmani,text_indopak&translations=131&transliteration=true`
       );
       const json = await res.json();
       if (!json.verse || !json.verse.words) {
@@ -190,7 +187,7 @@ export default function App() {
             meaning: w.translation?.text || "",
             transliteration: w.transliteration?.text || "",
             position: i + 1,
-            audioUrl: w.audio_url ? `https://audio.quran.com/${w.audio_url}` : null,
+            audioUrl: null, // computed from position when needed
           }));
         const surahName = SURAH_NAMES[s] || `Surah ${s}`;
         setVerseData({ wordList, surahName, surah: s, ayah: a });
@@ -205,10 +202,7 @@ export default function App() {
     if (verseData) {
       const word = verseData.wordList[i];
       setPlayingIdx(i);
-      // Try proper Quranic audio first, fall back to TTS
-      if (!playWordAudioUrl(word.audioUrl)) {
-        speakArabic(word.arabic);
-      }
+      playWordAudio(verseData.surah, verseData.ayah, word.position);
       setTimeout(() => setPlayingIdx(null), 1500);
     }
     setSelectedWordIdx(prev => prev === i ? null : i);
@@ -223,7 +217,7 @@ export default function App() {
     const { error } = await supabase.from("words").insert([{
       arabic: w.arabic, meaning: w.meaning, root: null,
       transliteration: w.transliteration || null,
-      audio_url: w.audioUrl ? w.audioUrl.replace("https://audio.quran.com/","") : null,
+      audio_url: w.position ? `${String(verseData?.surah||0).padStart(3,'0')}_${String(verseData?.ayah||0).padStart(3,'0')}_${String(w.position).padStart(3,'0')}` : null,
       added_by: (wordAddedBy.trim() || userName || null), surah: surahRef,
     }]);
     if (!error) {
