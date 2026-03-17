@@ -45,8 +45,17 @@ function buildQuestions(words) {
   });
 }
 
-// Speak Arabic text using the browser's built-in Web Speech API
-// This requires no external CDN and works reliably everywhere
+// Play audio from quran.com CDN (proper Quranic recitation)
+function playWordAudioUrl(url) {
+  if (!url) return false;
+  try {
+    const audio = new Audio(url);
+    audio.play().catch(() => {});
+    return true;
+  } catch { return false; }
+}
+
+// Fallback: Web Speech API with Arabic TTS
 function speakArabic(text) {
   if (!text || typeof window === "undefined") return;
   try {
@@ -54,25 +63,7 @@ function speakArabic(text) {
     const utter = new SpeechSynthesisUtterance(text);
     utter.lang = "ar-SA";
     utter.rate = 0.8;
-    utter.pitch = 1;
-    // Try to find an Arabic voice
-    const voices = window.speechSynthesis.getVoices();
-    const arabicVoice = voices.find(v => v.lang.startsWith("ar"));
-    if (arabicVoice) utter.voice = arabicVoice;
     window.speechSynthesis.speak(utter);
-  } catch {}
-}
-
-// Also try fetching from everyayah.com (whole ayah, not word-level)
-// as a supplementary audio option
-function playVerseAudio(surah, ayah) {
-  const s = String(surah).padStart(3,"0");
-  const a = String(ayah).padStart(3,"0");
-  // Mishari Al-Afasy on everyayah.com — widely accessible
-  const url = `https://everyayah.com/data/Alafasy_64kbps/${s}${a}.mp3`;
-  try {
-    const audio = new Audio(url);
-    audio.play().catch(() => {});
   } catch {}
 }
 
@@ -185,7 +176,7 @@ export default function App() {
     setSelectedWordIdx(null);
     try {
       const res = await fetch(
-        `https://api.quran.com/api/v4/verses/by_key/${s}:${a}?words=true&word_fields=text_uthmani,text_indopak,audio&translations=131&transliteration=true`
+        `https://api.quran.com/api/v4/verses/by_key/${s}:${a}?words=true&word_fields=text_uthmani,text_indopak,audio_url&translations=131&transliteration=true`
       );
       const json = await res.json();
       if (!json.verse || !json.verse.words) {
@@ -199,7 +190,7 @@ export default function App() {
             meaning: w.translation?.text || "",
             transliteration: w.transliteration?.text || "",
             position: i + 1,
-            audioUrl: w.audio?.url ? `https://audio.qurancdn.com/${w.audio.url}` : null,
+            audioUrl: w.audio_url ? `https://audio.quran.com/${w.audio_url}` : null,
           }));
         const surahName = SURAH_NAMES[s] || `Surah ${s}`;
         setVerseData({ wordList, surahName, surah: s, ayah: a });
@@ -214,7 +205,10 @@ export default function App() {
     if (verseData) {
       const word = verseData.wordList[i];
       setPlayingIdx(i);
-      speakArabic(word.arabic);
+      // Try proper Quranic audio first, fall back to TTS
+      if (!playWordAudioUrl(word.audioUrl)) {
+        speakArabic(word.arabic);
+      }
       setTimeout(() => setPlayingIdx(null), 1500);
     }
     setSelectedWordIdx(prev => prev === i ? null : i);
@@ -229,6 +223,7 @@ export default function App() {
     const { error } = await supabase.from("words").insert([{
       arabic: w.arabic, meaning: w.meaning, root: null,
       transliteration: w.transliteration || null,
+      audio_url: w.audioUrl ? w.audioUrl.replace("https://audio.quran.com/","") : null,
       added_by: (wordAddedBy.trim() || userName || null), surah: surahRef,
     }]);
     if (!error) {
