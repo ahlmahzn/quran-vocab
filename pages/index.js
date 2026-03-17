@@ -45,14 +45,17 @@ function buildQuestions(words) {
   });
 }
 
-// Play word audio via our own Vercel proxy (bypasses CORS)
-function playWordAudio(surah, ayah, position) {
-  const url = `/api/audio?surah=${surah}&ayah=${ayah}&word=${position}`;
-  const audio = new Audio(url);
-  audio.play().catch(() => speakArabic(null));
+// Play ayah audio via our Vercel proxy (real Quranic recitation, no CORS)
+// Plays the full ayah — Mishari Al-Afasy recitation from everyayah.com
+let currentAudio = null;
+function playAyahAudio(surah, ayah) {
+  if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+  const url = `/api/audio?surah=${surah}&ayah=${ayah}`;
+  currentAudio = new Audio(url);
+  currentAudio.play().catch(() => {});
 }
 
-// TTS fallback when no position info is available
+// TTS fallback for flashcards (no surah/ayah info available)
 function speakArabic(text) {
   if (!text || typeof window === "undefined") return;
   try {
@@ -97,6 +100,46 @@ function parseSurahRef(ref) {
   return { surah: parseInt(match[1]), ayah: parseInt(match[2]) };
 }
 
+// ── Leaderboard helpers ──────────────────────────────────────────────────────
+function getCurrentMonth() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+}
+
+async function recordLeaderboardEvent(userName, field, increment = 1) {
+  if (!userName) return;
+  const month = getCurrentMonth();
+  // Upsert: insert or update existing row
+  const { data: existing } = await supabase
+    .from("leaderboard")
+    .select("*")
+    .eq("user_name", userName)
+    .eq("month", month)
+    .single();
+
+  const POINTS = { words_added: 1, quizzes_completed: 2, perfect_scores: 3 };
+
+  if (existing) {
+    const newVal = (existing[field] || 0) + increment;
+    const newPoints = existing.points + (POINTS[field] || 0) * increment;
+    await supabase.from("leaderboard").update({
+      [field]: newVal,
+      points: newPoints,
+      updated_at: new Date().toISOString(),
+    }).eq("id", existing.id);
+  } else {
+    const pointsVal = (POINTS[field] || 0) * increment;
+    await supabase.from("leaderboard").insert([{
+      user_name: userName,
+      month,
+      words_added: field === "words_added" ? increment : 0,
+      quizzes_completed: field === "quizzes_completed" ? increment : 0,
+      perfect_scores: field === "perfect_scores" ? increment : 0,
+      points: pointsVal,
+    }]);
+  }
+}
+
 export default function App() {
   const [tab, setTab] = useState("list");
   const [words, setWords] = useState(null);
@@ -136,7 +179,6 @@ export default function App() {
   // sync wordAddedBy with userName whenever verse tab opens
   useEffect(() => { setWordAddedBy(userName); }, [userName, tab]);
   const [savingWord, setSavingWord] = useState(false);
-  const [playingIdx, setPlayingIdx] = useState(null);
 
   const loadWords = useCallback(async () => {
     const { data, error } = await supabase
@@ -187,7 +229,6 @@ export default function App() {
             meaning: w.translation?.text || "",
             transliteration: w.transliteration?.text || "",
             position: i + 1,
-            audioUrl: null, // computed from position when needed
           }));
         const surahName = SURAH_NAMES[s] || `Surah ${s}`;
         setVerseData({ wordList, surahName, surah: s, ayah: a });
@@ -200,10 +241,9 @@ export default function App() {
 
   const handleWordClick = (i) => {
     if (verseData) {
-      const word = verseData.wordList[i];
       setPlayingIdx(i);
-      playWordAudio(verseData.surah, verseData.ayah, word.position);
-      setTimeout(() => setPlayingIdx(null), 1500);
+      playAyahAudio(verseData.surah, verseData.ayah);
+      setTimeout(() => setPlayingIdx(null), 2000);
     }
     setSelectedWordIdx(prev => prev === i ? null : i);
   };
@@ -217,13 +257,13 @@ export default function App() {
     const { error } = await supabase.from("words").insert([{
       arabic: w.arabic, meaning: w.meaning, root: null,
       transliteration: w.transliteration || null,
-      audio_url: w.position ? `${String(verseData?.surah||0).padStart(3,'0')}_${String(verseData?.ayah||0).padStart(3,'0')}_${String(w.position).padStart(3,'0')}` : null,
       added_by: (wordAddedBy.trim() || userName || null), surah: surahRef,
     }]);
     if (!error) {
       showToast(`"${w.arabic}" added! ✓`);
       setSelectedWordIdx(null);
       await loadWords();
+      recordLeaderboardEvent(wordAddedBy.trim() || userName, "words_added");
     } else showToast("Error saving word");
     setSavingWord(false);
   };
@@ -266,7 +306,12 @@ export default function App() {
     const newAnswers = [...answers, { word: q.word, selected: opt, correct: q.correct, isCorrect }];
     setAnswers(newAnswers);
     setTimeout(() => {
-      if (qIndex + 1 >= questions.length) setQuizDone(true);
+      if (qIndex + 1 >= questions.length) {
+        setQuizDone(true);
+        const allCorrect = newAnswers.every(a => a.isCorrect);
+        recordLeaderboardEvent(userName, "quizzes_completed");
+        if (allCorrect) recordLeaderboardEvent(userName, "perfect_scores");
+      }
       else { setQIndex(i => i + 1); setSelected(null); }
     }, 900);
   };
@@ -318,14 +363,14 @@ export default function App() {
 
         {words === null && <div className="loading">Loading shared vocabulary…</div>}
 
-        {words !== null && tab === "list" && <WordList words={words} onDelete={handleDelete} userName={userName} />}
+        {words !== null && tab === "list" && <WordList words={words} onDelete={handleDelete} userName={userName} showLeaderboard={true} />}
 
         {words !== null && tab === "verse" && (
           <div>
             <div className="add-form">
               <h2>✦ Add Words from a Verse</h2>
               <p style={{color:"var(--muted)",fontSize:".88rem",marginBottom:18}}>
-                Enter a Surah and Ayah, then <strong style={{color:"var(--gold)"}}>tap any Arabic word</strong> to hear it pronounced and add it to the list.
+                Enter a Surah and Ayah, then <strong style={{color:"var(--gold)"}}>tap any Arabic word</strong> to see its meaning and add it to the list.
               </p>
               <div className="verse-lookup-row">
                 <div className="field">
@@ -353,17 +398,15 @@ export default function App() {
             {verseData && (
               <div className="verse-display">
                 <div className="verse-reference">{verseData.surahName} — Ayah {verseData.ayah}</div>
-                <div className="verse-hint">🔊 Tap any word to hear it · tap again to select and add</div>
+                <div className="verse-hint">Tap any word to see its meaning and add it to your list</div>
                 <div className="wbw-grid">
                   {verseData.wordList.map((w, i) => {
                     const isSelected = selectedWordIdx === i;
-                    const isPlaying = playingIdx === i;
                     const alreadyAdded = words.some(wd => wd.arabic === w.arabic);
                     return (
                       <button key={i}
-                        className={`wbw-cell ${isSelected?"selected":""} ${alreadyAdded?"already-added":""} ${isPlaying?"playing":""}`}
+                        className={`wbw-cell ${isSelected?"selected":""} ${alreadyAdded?"already-added":""}`}
                         onClick={() => handleWordClick(i)}>
-                        <span className="wbw-audio-icon">{isPlaying ? "🔊" : "　"}</span>
                         <span className="wbw-arabic">{w.arabic}</span>
                         <span className="wbw-translit">{w.transliteration}</span>
                         <span className={`wbw-meaning ${isSelected?"highlighted":""}`}>{w.meaning}</span>
@@ -448,7 +491,7 @@ export default function App() {
           )
         )}
 
-        {words !== null && tab === "games" && <Games words={words} userName={userName} />}
+        {words !== null && tab === "games" && <Games words={words} userName={userName} onScore={recordLeaderboardEvent} />}
       </div>
       <div className={`toast ${toast?"show":""}`}>{toast}</div>
     </>
@@ -456,7 +499,7 @@ export default function App() {
 }
 
 // ── Word List ─────────────────────────────────────────────────────────────────
-function WordList({ words, onDelete, userName }) {
+function WordList({ words, onDelete, userName, showLeaderboard }) {
   const [search, setSearch] = useState("");
   const [dayFilter, setDayFilter] = useState("all");
   const [customDays, setCustomDays] = useState("");
@@ -482,6 +525,7 @@ function WordList({ words, onDelete, userName }) {
 
   return (
     <div>
+      {showLeaderboard && <Leaderboard userName={userName} />}
       <div className="list-header">
         <h2>✦ All Words</h2>
         <span className="count-badge">{filtered.length} / {words.length}</span>
@@ -519,7 +563,7 @@ function WordList({ words, onDelete, userName }) {
                 <div className="word-meta">
                   {w.root && <span className="meta-chip root">Root: {w.root}</span>}
                   {w.surah && <span className="meta-chip">{w.surah}</span>}
-                  {w.added_by && <span className="meta-chip added-by">by {w.added_by}</span>}
+
                   {w.created_at && <span className="meta-chip">{new Date(w.created_at).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</span>}
                 </div>
               </div>
@@ -532,8 +576,82 @@ function WordList({ words, onDelete, userName }) {
   );
 }
 
+// ── Leaderboard Widget ───────────────────────────────────────────────────────
+function Leaderboard({ userName }) {
+  const [open, setOpen] = useState(true);
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const month = getCurrentMonth();
+  const monthLabel = new Date().toLocaleString("en-US", { month: "long", year: "numeric" });
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const { data: rows } = await supabase
+      .from("leaderboard")
+      .select("*")
+      .eq("month", month)
+      .order("points", { ascending: false });
+    setData(rows || []);
+    setLoading(false);
+  }, [month]);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Realtime updates
+  useEffect(() => {
+    const channel = supabase
+      .channel("leaderboard-changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "leaderboard" }, () => load())
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, [load]);
+
+  const medals = ["🥇","🥈","🥉"];
+
+  return (
+    <div className="lb-widget">
+      <button className="lb-header" onClick={() => setOpen(o => !o)}>
+        <span className="lb-title">🏆 Leaderboard — {monthLabel}</span>
+        <span className="lb-toggle">{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <div className="lb-body">
+          {loading ? (
+            <div className="lb-empty">Loading…</div>
+          ) : data.length === 0 ? (
+            <div className="lb-empty">No scores yet this month — add words and take quizzes to earn points!</div>
+          ) : (
+            <>
+              <div className="lb-rows">
+                {data.map((row, i) => {
+                  const isMe = row.user_name === userName;
+                  return (
+                    <div key={row.id} className={`lb-row ${isMe?"lb-row-me":""}`}>
+                      <span className="lb-rank">{medals[i] || `#${i+1}`}</span>
+                      <span className="lb-name">{row.user_name}{isMe && <span className="lb-you"> (you)</span>}</span>
+                      <div className="lb-breakdown">
+                        <span title="Words added">📖 {row.words_added}</span>
+                        <span title="Quizzes completed">🌙 {row.quizzes_completed}</span>
+                        <span title="Perfect scores">⭐ {row.perfect_scores}</span>
+                      </div>
+                      <span className="lb-points">{row.points} pts</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="lb-legend">
+                📖 1pt per word &nbsp;·&nbsp; 🌙 2pts per quiz &nbsp;·&nbsp; ⭐ 3pts per perfect score
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Games Hub ─────────────────────────────────────────────────────────────────
-function Games({ words, userName }) {
+function Games({ words, userName, onScore }) {
   const [game, setGame] = useState(null);
   const [dayFilter, setDayFilter] = useState("all");
   const [customDays, setCustomDays] = useState("");
@@ -554,10 +672,10 @@ function Games({ words, userName }) {
   // Words with verse refs only (for Complete the Verse)
   const verseWords = pool.filter(w => w.surah && parseSurahRef(w.surah));
 
-  if (game === "flashcard") return <FlashcardGame words={pool} onBack={() => setGame(null)} />;
-  if (game === "match") return <MatchGame words={pool} onBack={() => setGame(null)} />;
-  if (game === "speed") return <SpeedRound words={pool} onBack={() => setGame(null)} />;
-  if (game === "verse") return <CompleteTheVerse words={pool} verseWords={verseWords} onBack={() => setGame(null)} />;
+  if (game === "flashcard") return <FlashcardGame words={pool} onBack={() => setGame(null)} userName={userName} onScore={onScore} />;
+  if (game === "match") return <MatchGame words={pool} onBack={() => setGame(null)} userName={userName} onScore={onScore} />;
+  if (game === "speed") return <SpeedRound words={pool} onBack={() => setGame(null)} userName={userName} onScore={onScore} />;
+  if (game === "verse") return <CompleteTheVerse words={pool} verseWords={verseWords} onBack={() => setGame(null)} userName={userName} onScore={onScore} />;
 
   return (
     <div>
@@ -616,13 +734,12 @@ function Games({ words, userName }) {
 }
 
 // ── Flashcard Game ────────────────────────────────────────────────────────────
-function FlashcardGame({ words, onBack }) {
+function FlashcardGame({ words, onBack, userName, onScore }) {
   const [deck] = useState(() => shuffle([...words]));
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [scores, setScores] = useState({ know: 0, review: 0 });
   const [done, setDone] = useState(false);
-  const [playing, setPlaying] = useState(false);
   const card = deck[index];
 
   const rate = (knew) => {
@@ -662,6 +779,15 @@ function FlashcardGame({ words, onBack }) {
   // Get transliteration — from saved field or generate on the fly
   const translit = card.transliteration || arabicToTranslit(card.arabic);
 
+  // Record on completion
+  useEffect(() => {
+    if (done && userName && onScore) {
+      const pct = scores.know / deck.length;
+      onScore(userName, "quizzes_completed");
+      if (pct === 1) onScore(userName, "perfect_scores");
+    }
+  }, [done]);
+
   if (done) return (
     <div className="results">
       <div className="score-circle"><div className="score-number">{Math.round(scores.know/deck.length*100)}%</div></div>
@@ -680,9 +806,6 @@ function FlashcardGame({ words, onBack }) {
       <div className={`flashcard ${flipped?"flipped":""}`} onClick={() => setFlipped(f => !f)}>
         <div className="flashcard-inner">
           <div className="flashcard-front">
-            <button className={`fc-audio-btn ${playing?"fc-audio-playing":""}`} onClick={handleAudio} title="Hear pronunciation">
-              {playing ? "🔊" : "🔈"}
-            </button>
             <div className="fc-arabic">{card.arabic}</div>
             <div className="fc-translit">{translit}</div>
             <div className="fc-tap-hint">tap anywhere to reveal meaning</div>
@@ -708,7 +831,7 @@ function FlashcardGame({ words, onBack }) {
 }
 
 // ── Match Up Game ─────────────────────────────────────────────────────────────
-function MatchGame({ words, onBack }) {
+function MatchGame({ words, onBack, userName, onScore }) {
   const COUNT = Math.min(4, words.length);
   const initRound = () => {
     const picked = shuffle([...words]).slice(0, COUNT);
@@ -751,6 +874,13 @@ function MatchGame({ words, onBack }) {
 
   const handleArabic = (id) => { if (matched.includes(id)||wrong.includes(id)) return; setSelArabic(id); if (selMeaning) check(id, selMeaning); };
   const handleMeaning = (id) => { if (matched.includes(id)||wrong.includes(id)) return; setSelMeaning(id); if (selArabic) check(selArabic, id); };
+
+  useEffect(() => {
+    if (done && userName && onScore) {
+      onScore(userName, "quizzes_completed");
+      if (errors === 0) onScore(userName, "perfect_scores");
+    }
+  }, [done]);
 
   if (done) return (
     <div className="results">
@@ -799,7 +929,7 @@ const SPEED_LIVES = 3;
 const SPEED_ROUNDS = 10;
 const SPEED_OPTIONS = 3;
 
-function SpeedRound({ words, onBack }) {
+function SpeedRound({ words, onBack, userName, onScore }) {
   const [deck] = useState(() => shuffle([...words]).slice(0, SPEED_ROUNDS));
   const [index, setIndex] = useState(0);
   const [options, setOptions] = useState([]);
@@ -863,6 +993,13 @@ function SpeedRound({ words, onBack }) {
   const timerPct = (timeLeft / SPEED_TIME) * 100;
   const timerColor = timerPct > 50 ? "var(--teal)" : timerPct > 25 ? "var(--gold)" : "var(--rose)";
 
+  useEffect(() => {
+    if (done && userName && onScore) {
+      onScore(userName, "quizzes_completed");
+      if (score === deck.length) onScore(userName, "perfect_scores");
+    }
+  }, [done]);
+
   if (done) return (
     <div className="results">
       <div className="score-circle"><div className="score-number">{score}/{deck.length}</div></div>
@@ -916,7 +1053,7 @@ function SpeedRound({ words, onBack }) {
 // ── Complete the Verse ────────────────────────────────────────────────────────
 const CTV_ROUNDS = 5;
 
-function CompleteTheVerse({ words, verseWords, onBack }) {
+function CompleteTheVerse({ words, verseWords, onBack, userName, onScore }) {
   const [rounds, setRounds] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -1019,6 +1156,13 @@ function CompleteTheVerse({ words, verseWords, onBack }) {
   if (loading) return <div className="loading">Loading verses…<br/><span style={{fontSize:".8rem",color:"var(--muted)"}}>Fetching from Quran API</span></div>;
   if (loadError) return <div className="empty"><div className="empty-icon">🕌</div><p>{loadError}</p><div style={{marginTop:20}}><button className="back-btn" onClick={onBack}>← Back</button></div></div>;
   if (!rounds || rounds.length === 0) return <div className="empty"><div className="empty-icon">🕌</div><p>Not enough words with valid verse references to play.</p><div style={{marginTop:20}}><button className="back-btn" onClick={onBack}>← Back</button></div></div>;
+
+  useEffect(() => {
+    if (done && userName && onScore) {
+      onScore(userName, "quizzes_completed");
+      if (score === rounds.length) onScore(userName, "perfect_scores");
+    }
+  }, [done]);
 
   if (done) return (
     <div className="results">
