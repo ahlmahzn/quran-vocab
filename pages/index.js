@@ -565,6 +565,7 @@ function FlashcardGame({ words, onBack }) {
           <div className="flashcard-front">
             <div className="fc-label">Arabic</div>
             <div className="fc-arabic">{card.arabic}</div>
+            {card.transliteration && <div className="fc-translit">{card.transliteration}</div>}
             {card.surah && <div className="fc-surah">{card.surah}</div>}
             <div className="fc-tap-hint">tap to reveal meaning</div>
           </div>
@@ -590,7 +591,7 @@ function FlashcardGame({ words, onBack }) {
 
 // ── Match Up Game ─────────────────────────────────────────────────────────────
 function MatchGame({ words, onBack }) {
-  const COUNT = Math.min(6, words.length);
+  const COUNT = Math.min(4, words.length);
   const initRound = () => {
     const picked = shuffle([...words]).slice(0, COUNT);
     return { arabic: shuffle(picked.map(w => w.id)), meanings: shuffle(picked.map(w => w.id)), words: picked };
@@ -599,7 +600,9 @@ function MatchGame({ words, onBack }) {
   const [selArabic, setSelArabic] = useState(null);
   const [selMeaning, setSelMeaning] = useState(null);
   const [matched, setMatched] = useState([]);
+  const [matchColors, setMatchColors] = useState({});
   const [wrong, setWrong] = useState([]);
+  const MATCH_COLORS = ["#2d6a4f","#1d4e89","#6b2737","#5c4a1e"];
   const [errors, setErrors] = useState(0);
   const [done, setDone] = useState(false);
   const [startTime] = useState(Date.now());
@@ -616,6 +619,8 @@ function MatchGame({ words, onBack }) {
   const check = (aId, mId) => {
     if (aId === mId) {
       const newMatched = [...matched, aId];
+      const colorIdx = newMatched.length - 1;
+      setMatchColors(c => ({ ...c, [aId]: MATCH_COLORS[colorIdx % MATCH_COLORS.length] }));
       setMatched(newMatched);
       setSelArabic(null); setSelMeaning(null);
       if (newMatched.length === COUNT) setDone(true);
@@ -635,7 +640,7 @@ function MatchGame({ words, onBack }) {
       <h2>Matched! 🔗</h2>
       <p>{elapsed}s &nbsp;·&nbsp; {errors} mistake{errors!==1?"s":""}</p>
       <div className="btn-row" style={{marginTop:24}}>
-        <button className="retry-btn" onClick={() => { setRound(initRound()); setMatched([]); setWrong([]); setErrors(0); setDone(false); setSelArabic(null); setSelMeaning(null); }}>Play Again</button>
+        <button className="retry-btn" onClick={() => { setRound(initRound()); setMatched([]); setMatchColors({}); setWrong([]); setErrors(0); setDone(false); setSelArabic(null); setSelMeaning(null); }}>Play Again</button>
         <button className="back-btn" onClick={onBack}>Back to Games</button>
       </div>
     </div>
@@ -652,14 +657,16 @@ function MatchGame({ words, onBack }) {
           {round.arabic.map(id => {
             const w = wordMap[id];
             const isMatched = matched.includes(id), isWrong = wrong.includes(id), isSel = selArabic===id;
-            return <button key={id} className={`match-btn arabic-btn ${isSel?"selected":""} ${isMatched?"matched":""} ${isWrong?"wrong":""}`} onClick={() => handleArabic(id)} disabled={isMatched}>{w.arabic}</button>;
+            const matchColor = matchColors[id];
+            return <button key={id} className={`match-btn arabic-btn ${isSel?"selected":""} ${isMatched?"matched":""} ${isWrong?"wrong":""}`} style={isMatched&&matchColor?{borderColor:matchColor,background:matchColor+"33",color:"var(--text)"}:{}} onClick={() => handleArabic(id)} disabled={isMatched}>{w.arabic}</button>;
           })}
         </div>
         <div className="match-col">
           {round.meanings.map(id => {
             const w = wordMap[id];
             const isMatched = matched.includes(id), isWrong = wrong.includes(id), isSel = selMeaning===id;
-            return <button key={id} className={`match-btn meaning-btn ${isSel?"selected":""} ${isMatched?"matched":""} ${isWrong?"wrong":""}`} onClick={() => handleMeaning(id)} disabled={isMatched}>{w.meaning}</button>;
+            const matchColor = matchColors[id];
+            return <button key={id} className={`match-btn meaning-btn ${isSel?"selected":""} ${isMatched?"matched":""} ${isWrong?"wrong":""}`} style={isMatched&&matchColor?{borderColor:matchColor,background:matchColor+"33",color:"var(--text)"}:{}} onClick={() => handleMeaning(id)} disabled={isMatched}>{w.meaning}</button>;
           })}
         </div>
       </div>
@@ -669,7 +676,7 @@ function MatchGame({ words, onBack }) {
 }
 
 // ── Speed Round ───────────────────────────────────────────────────────────────
-const SPEED_TIME = 6; // seconds per word
+const SPEED_TIME = 7; // seconds per word
 const SPEED_LIVES = 3;
 const SPEED_ROUNDS = 10;
 
@@ -765,6 +772,7 @@ function SpeedRound({ words, onBack }) {
       <div className={`quiz-card speed-card ${status?"speed-"+status:""}`}>
         <div className="quiz-question-label">What does this word mean?</div>
         <div className="quiz-arabic">{card.arabic}</div>
+        {card.transliteration && <div className="quiz-surah" style={{color:"var(--teal)",fontStyle:"italic"}}>{card.transliteration}</div>}
         {card.surah && <div className="quiz-surah">{card.surah}</div>}
       </div>
 
@@ -790,7 +798,7 @@ function SpeedRound({ words, onBack }) {
 const CTV_ROUNDS = 5;
 
 function CompleteTheVerse({ words, verseWords, onBack }) {
-  const [rounds, setRounds] = useState(null); // array of round data
+  const [rounds, setRounds] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [index, setIndex] = useState(0);
@@ -800,59 +808,73 @@ function CompleteTheVerse({ words, verseWords, onBack }) {
   const [score, setScore] = useState(0);
   const [done, setDone] = useState(false);
 
-  // Build rounds by fetching verses for randomly picked words
   useEffect(() => {
     const build = async () => {
       setLoading(true);
       setLoadError("");
       const picked = shuffle([...verseWords]).slice(0, CTV_ROUNDS);
       const built = [];
+
       for (const word of picked) {
         const ref = parseSurahRef(word.surah);
         if (!ref) continue;
         try {
+          // Fetch word-by-word WITH per-word translation
           const res = await fetch(
-            `https://api.quran.com/api/v4/verses/by_key/${ref.surah}:${ref.ayah}?words=true&word_fields=text_uthmani&translations=131`
+            `https://api.quran.com/api/v4/verses/by_key/${ref.surah}:${ref.ayah}?words=true&word_fields=text_uthmani&word_translation_language=en&translations=131`
           );
           const json = await res.json();
-          if (!json.verse) continue;
-          const verse = json.verse;
-          const allWords = verse.words.filter(w => w.char_type_name === "word");
-          const translation = verse.translations?.[0]?.text?.replace(/<[^>]+>/g,"") || "";
+          if (!json.verse?.words) continue;
 
-          // Find the target word position in the verse
-          const targetIdx = allWords.findIndex(w =>
-            (w.text_uthmani || "").includes(word.arabic) || word.arabic.includes(w.text_uthmani || "")
-          );
+          const allWords = json.verse.words.filter(w => w.char_type_name === "word");
+
+          // Find target word by exact match first, then partial
+          let targetIdx = allWords.findIndex(w => w.text_uthmani === word.arabic);
+          if (targetIdx === -1) {
+            // Try matching ignoring diacritics
+            const stripDia = s => s.replace(/[ؐ-ًؚ-ٰٟۖ-ۜ۟-۪ۤۧۨ-ۭ]/g,"");
+            targetIdx = allWords.findIndex(w => stripDia(w.text_uthmani||"") === stripDia(word.arabic));
+          }
           if (targetIdx === -1) continue;
 
-          // Build Arabic verse with blank
-          const arabicWords = allWords.map((w, i) =>
-            i === targetIdx ? "___" : (w.text_uthmani || "")
-          );
+          // Use the word's own per-word translation for the English blank — much more accurate
+          const targetWordTranslation = allWords[targetIdx].translation?.text || word.meaning;
 
-          // Build English with blank — replace the word's meaning in the translation
-          const englishBlanked = translation.replace(
-            new RegExp(`\\b${word.meaning.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}\\b`, "i"),
-            "___"
-          ) || translation; // fallback if not found
+          // Build Arabic verse words array — blank the target
+          const arabicWords = allWords.map((w, i) => ({
+            text: w.text_uthmani || "",
+            isBlank: i === targetIdx
+          }));
 
-          // 2 distractors from other words in pool
-          const distractorsPool = shuffle(words.filter(w => w.id !== word.id));
-          const arabicDistractors = distractorsPool.slice(0, 2).map(w => w.arabic);
-          const meaningDistractors = distractorsPool.slice(2, 4).map(w => w.meaning);
+          // Build English word-by-word line — use each word's translation
+          // Show as: word1 | word2 | ___ | word4 ...
+          const englishWords = allWords.map((w, i) => ({
+            text: w.translation?.text || "",
+            isBlank: i === targetIdx
+          }));
 
+          // Full verse translation as context
+          const fullTranslation = json.verse.translations?.[0]?.text?.replace(/<[^>]+>/g,"") || "";
+
+          // 2 distractors each
+          const pool = shuffle(words.filter(w => w.id !== word.id));
+          const arabicDistractors = pool.slice(0, 2).map(w => w.arabic);
+          const meaningDistractors = pool.slice(2, 4).map(w => w.meaning);
+
+          // Use targetWordTranslation as the correct meaning for this round
           built.push({
-            word,
+            word: { ...word, meaning: targetWordTranslation },
+            vocabMeaning: word.meaning, // original saved meaning for display
             arabicWords,
+            englishWords,
+            fullTranslation,
             arabicOptions: shuffle([word.arabic, ...arabicDistractors]),
-            meaningOptions: shuffle([word.meaning, ...meaningDistractors]),
-            translation,
-            englishBlanked,
+            meaningOptions: shuffle([targetWordTranslation, ...meaningDistractors]),
             surahRef: word.surah,
           });
         } catch { continue; }
       }
+
       if (built.length === 0) {
         setLoadError("Could not load verses. Make sure words have valid Surah references like '2:255'.");
       }
@@ -866,16 +888,16 @@ function CompleteTheVerse({ words, verseWords, onBack }) {
     if (!selArabic || !selMeaning) return;
     const round = rounds[index];
     const bothCorrect = selArabic === round.word.arabic && selMeaning === round.word.meaning;
-    if (bothCorrect) setScore(s => s+1);
+    if (bothCorrect) setScore(s => s + 1);
     setSubmitted(true);
   };
 
   const next = () => {
     if (index + 1 >= rounds.length) setDone(true);
-    else { setIndex(i => i+1); setSelArabic(null); setSelMeaning(null); setSubmitted(false); }
+    else { setIndex(i => i + 1); setSelArabic(null); setSelMeaning(null); setSubmitted(false); }
   };
 
-  if (loading) return <div className="loading">Loading verses… <br/><span style={{fontSize:".8rem",color:"var(--muted)"}}>Fetching from Quran API</span></div>;
+  if (loading) return <div className="loading">Loading verses…<br/><span style={{fontSize:".8rem",color:"var(--muted)"}}>Fetching from Quran API</span></div>;
   if (loadError) return <div className="empty"><div className="empty-icon">🕌</div><p>{loadError}</p><div style={{marginTop:20}}><button className="back-btn" onClick={onBack}>← Back</button></div></div>;
   if (!rounds || rounds.length === 0) return <div className="empty"><div className="empty-icon">🕌</div><p>Not enough words with valid verse references to play.</p><div style={{marginTop:20}}><button className="back-btn" onClick={onBack}>← Back</button></div></div>;
 
@@ -903,23 +925,25 @@ function CompleteTheVerse({ words, verseWords, onBack }) {
       <div className="ctv-card">
         <div className="ctv-ref">{round.surahRef}</div>
 
-        {/* Arabic verse with blank */}
+        {/* Arabic verse */}
         <div className="ctv-arabic-verse">
           {round.arabicWords.map((w, i) =>
-            w === "___"
+            w.isBlank
               ? <span key={i} className={`ctv-blank arabic-blank ${submitted ? (arabicCorrect?"ctv-correct":"ctv-wrong") : selArabic?"ctv-filled":""}`}>
                   {selArabic || "___"}
                 </span>
-              : <span key={i} className="ctv-arabic-word">{w}</span>
+              : <span key={i} className="ctv-arabic-word">{w.text}</span>
           )}
         </div>
 
-        {/* English with blank */}
+        {/* English word-by-word with blank */}
         <div className="ctv-english-verse">
-          {round.englishBlanked.split("___").map((part, i, arr) =>
-            i < arr.length - 1
-              ? <span key={i}>{part}<span className={`ctv-blank ${submitted ? (meaningCorrect?"ctv-correct":"ctv-wrong") : selMeaning?"ctv-filled":""}`}>{selMeaning || "___"}</span></span>
-              : <span key={i}>{part}</span>
+          {round.englishWords.map((w, i) =>
+            w.isBlank
+              ? <span key={i} className={`ctv-blank ${submitted ? (meaningCorrect?"ctv-correct":"ctv-wrong") : selMeaning?"ctv-filled":""}`}>
+                  {selMeaning || "___"}
+                </span>
+              : <span key={i} className="ctv-eng-word">{w.text} </span>
           )}
         </div>
       </div>
@@ -969,6 +993,7 @@ function CompleteTheVerse({ words, verseWords, onBack }) {
     </div>
   );
 }
+
 
 // ── Quiz Question ─────────────────────────────────────────────────────────────
 function QuizQuestion({ q, total, index, selected, onAnswer }) {
