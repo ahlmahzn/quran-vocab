@@ -45,12 +45,34 @@ function buildQuestions(words) {
   });
 }
 
-function playAudio(url) {
+function playAudio(url, fallbackUrl) {
   if (!url) return;
-  try {
-    const audio = new Audio(url);
-    audio.play().catch(() => {});
-  } catch {}
+  const tryPlay = (src) => {
+    return new Promise((resolve, reject) => {
+      const audio = new Audio();
+      audio.crossOrigin = "anonymous";
+      audio.oncanplaythrough = () => audio.play().then(resolve).catch(reject);
+      audio.onerror = () => reject(new Error("load error"));
+      audio.src = src;
+      audio.load();
+    });
+  };
+  tryPlay(url).catch(() => {
+    if (fallbackUrl) tryPlay(fallbackUrl).catch(() => {});
+  });
+}
+
+// Build all possible audio URLs for a word given surah:ayah:position
+function getWordAudioUrls(surah, ayah, position) {
+  const s = String(surah).padStart(3,"0");
+  const a = String(ayah).padStart(3,"0");
+  const p = String(position).padStart(3,"0");
+  const key = `${s}${a}${p}`;
+  return [
+    `https://audio.qurancdn.com/wbw/ar/mishari_al_afasy/${key}.mp3`,
+    `https://verses.quran.com/Alafasy/mp3/${s}${a}${p}.mp3`,
+    `https://audio.qurancdn.com/wbw/en/omar_hisham_al_arabi/${key}.mp3`,
+  ];
 }
 
 
@@ -188,20 +210,13 @@ export default function App() {
   };
 
   const handleWordClick = (i) => {
-    // Play audio using URL from API
     if (verseData) {
       const word = verseData.wordList[i];
       setPlayingIdx(i);
-      if (word.audioUrl) {
-        playAudio(word.audioUrl);
-      } else {
-        // Fallback: construct URL manually
-        const key = `${String(verseData.surah).padStart(3,"0")}${String(verseData.ayah).padStart(3,"0")}${String(word.position).padStart(3,"0")}`;
-        playAudio(`https://audio.qurancdn.com/wbw/en/omar_hisham_al_arabi/${key}.mp3`);
-      }
+      const [primary, ...fallbacks] = getWordAudioUrls(verseData.surah, verseData.ayah, word.position);
+      playAudio(primary, fallbacks[0]);
       setTimeout(() => setPlayingIdx(null), 1500);
     }
-    // Select (or deselect) the word for adding
     setSelectedWordIdx(prev => prev === i ? null : i);
   };
 
@@ -648,7 +663,8 @@ function FlashcardGame({ words, onBack }) {
           stripDia(w.text_uthmani||"") === stripDia(arabicWords)
         );
         if (match?.audio?.url) {
-          playAudio(`https://audio.qurancdn.com/${match.audio.url}`);
+          const urls = getWordAudioUrls(ref.surah, ref.ayah, allWords.indexOf(match) + 1);
+        playAudio(urls[0], urls[1]);
         }
       })
       .catch(() => {});
