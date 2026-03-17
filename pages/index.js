@@ -45,34 +45,35 @@ function buildQuestions(words) {
   });
 }
 
-function playAudio(url, fallbackUrl) {
-  if (!url) return;
-  const tryPlay = (src) => {
-    return new Promise((resolve, reject) => {
-      const audio = new Audio();
-      audio.crossOrigin = "anonymous";
-      audio.oncanplaythrough = () => audio.play().then(resolve).catch(reject);
-      audio.onerror = () => reject(new Error("load error"));
-      audio.src = src;
-      audio.load();
-    });
-  };
-  tryPlay(url).catch(() => {
-    if (fallbackUrl) tryPlay(fallbackUrl).catch(() => {});
-  });
+// Speak Arabic text using the browser's built-in Web Speech API
+// This requires no external CDN and works reliably everywhere
+function speakArabic(text) {
+  if (!text || typeof window === "undefined") return;
+  try {
+    window.speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = "ar-SA";
+    utter.rate = 0.8;
+    utter.pitch = 1;
+    // Try to find an Arabic voice
+    const voices = window.speechSynthesis.getVoices();
+    const arabicVoice = voices.find(v => v.lang.startsWith("ar"));
+    if (arabicVoice) utter.voice = arabicVoice;
+    window.speechSynthesis.speak(utter);
+  } catch {}
 }
 
-// Build all possible audio URLs for a word given surah:ayah:position
-function getWordAudioUrls(surah, ayah, position) {
+// Also try fetching from everyayah.com (whole ayah, not word-level)
+// as a supplementary audio option
+function playVerseAudio(surah, ayah) {
   const s = String(surah).padStart(3,"0");
   const a = String(ayah).padStart(3,"0");
-  const p = String(position).padStart(3,"0");
-  const key = `${s}${a}${p}`;
-  return [
-    `https://audio.qurancdn.com/wbw/ar/mishari_al_afasy/${key}.mp3`,
-    `https://verses.quran.com/Alafasy/mp3/${s}${a}${p}.mp3`,
-    `https://audio.qurancdn.com/wbw/en/omar_hisham_al_arabi/${key}.mp3`,
-  ];
+  // Mishari Al-Afasy on everyayah.com — widely accessible
+  const url = `https://everyayah.com/data/Alafasy_64kbps/${s}${a}.mp3`;
+  try {
+    const audio = new Audio(url);
+    audio.play().catch(() => {});
+  } catch {}
 }
 
 
@@ -213,8 +214,7 @@ export default function App() {
     if (verseData) {
       const word = verseData.wordList[i];
       setPlayingIdx(i);
-      const [primary, ...fallbacks] = getWordAudioUrls(verseData.surah, verseData.ayah, word.position);
-      playAudio(primary, fallbacks[0]);
+      speakArabic(word.arabic);
       setTimeout(() => setPlayingIdx(null), 1500);
     }
     setSelectedWordIdx(prev => prev === i ? null : i);
@@ -691,11 +691,9 @@ function FlashcardGame({ words, onBack }) {
       <div className={`flashcard ${flipped?"flipped":""}`} onClick={() => setFlipped(f => !f)}>
         <div className="flashcard-inner">
           <div className="flashcard-front">
-            {card.surah && parseSurahRef(card.surah) && (
-              <button className={`fc-audio-btn ${playing?"fc-audio-playing":""}`} onClick={handleAudio} title="Hear pronunciation">
-                {playing ? "🔊" : "🔈"}
-              </button>
-            )}
+            <button className={`fc-audio-btn ${playing?"fc-audio-playing":""}`} onClick={handleAudio} title="Hear pronunciation">
+              {playing ? "🔊" : "🔈"}
+            </button>
             <div className="fc-arabic">{card.arabic}</div>
             <div className="fc-translit">{translit}</div>
             <div className="fc-tap-hint">tap anywhere to reveal meaning</div>
