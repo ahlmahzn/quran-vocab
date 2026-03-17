@@ -213,6 +213,7 @@ export default function App() {
     const surahRef = `${verseData.surahName} ${verseData.surah}:${verseData.ayah}`;
     const { error } = await supabase.from("words").insert([{
       arabic: w.arabic, meaning: w.meaning, root: null,
+      transliteration: w.transliteration || null,
       added_by: (wordAddedBy.trim() || userName || null), surah: surahRef,
     }]);
     if (!error) {
