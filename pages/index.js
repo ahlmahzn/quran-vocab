@@ -720,7 +720,7 @@ function FlashcardGame({ words, onBack }) {
         <div className="flashcard-inner">
           <div className="flashcard-front">
             <div className="fc-arabic">{card.arabic}</div>
-            {card.transliteration && <div className="fc-translit">{card.transliteration}</div>}
+            <div className="fc-translit">{card.transliteration || arabicToTranslit(card.arabic)}</div>
             <div className="fc-tap-hint">tap to reveal meaning</div>
           </div>
           <div className="flashcard-back">
@@ -927,7 +927,7 @@ function SpeedRound({ words, onBack }) {
       <div className={`quiz-card speed-card ${status?"speed-"+status:""}`}>
         <div className="quiz-question-label">What does this word mean?</div>
         <div className="quiz-arabic">{card.arabic}</div>
-        {card.transliteration && <div className="quiz-surah" style={{color:"var(--teal)",fontStyle:"italic"}}>{card.transliteration}</div>}
+        <div className="quiz-surah" style={{color:"var(--teal)",fontStyle:"italic",marginTop:"6px"}}>{card.transliteration || arabicToTranslit(card.arabic)}</div>
         {card.surah && <div className="quiz-surah">{card.surah}</div>}
       </div>
 
