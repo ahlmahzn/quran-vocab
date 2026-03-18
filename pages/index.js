@@ -47,27 +47,6 @@ function buildQuestions(words) {
 
 // Play ayah audio via our Vercel proxy (real Quranic recitation, no CORS)
 // Plays the full ayah — Mishari Al-Afasy recitation from everyayah.com
-let currentAudio = null;
-function playAyahAudio(surah, ayah) {
-  if (currentAudio) { currentAudio.pause(); currentAudio = null; }
-  const url = `/api/audio?surah=${surah}&ayah=${ayah}`;
-  currentAudio = new Audio(url);
-  currentAudio.play().catch(() => {});
-}
-
-// TTS fallback for flashcards (no surah/ayah info available)
-function speakArabic(text) {
-  if (!text || typeof window === "undefined") return;
-  try {
-    window.speechSynthesis.cancel();
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = "ar-SA";
-    utter.rate = 0.8;
-    window.speechSynthesis.speak(utter);
-  } catch {}
-}
-
-
 // Basic Arabic → Latin transliteration map
 const AR_MAP = {
   'ا':'a','أ':'a','إ':'i','آ':'aa','ب':'b','ت':'t','ث':'th','ج':'j','ح':'h',
@@ -240,11 +219,6 @@ export default function App() {
   };
 
   const handleWordClick = (i) => {
-    if (verseData) {
-      setPlayingIdx(i);
-      playAyahAudio(verseData.surah, verseData.ayah);
-      setTimeout(() => setPlayingIdx(null), 2000);
-    }
     setSelectedWordIdx(prev => prev === i ? null : i);
   };
 
@@ -756,8 +730,6 @@ function FlashcardGame({ words, onBack, userName, onScore }) {
     // Find word position by searching vocab words with same surah
     // Use constructed URL as best effort
     const arabicWords = card.arabic;
-    setPlaying(true);
-    setTimeout(() => setPlaying(false), 1800);
     // Try to fetch audio URL from API
     fetch(`https://api.quran.com/api/v4/verses/by_key/${ref.surah}:${ref.ayah}?words=true&word_fields=text_uthmani,audio`)
       .then(r => r.json())
@@ -769,8 +741,7 @@ function FlashcardGame({ words, onBack, userName, onScore }) {
           stripDia(w.text_uthmani||"") === stripDia(arabicWords)
         );
         if (match?.audio?.url) {
-          const urls = getWordAudioUrls(ref.surah, ref.ayah, allWords.indexOf(match) + 1);
-        playAudio(urls[0], urls[1]);
+
         }
       })
       .catch(() => {});
