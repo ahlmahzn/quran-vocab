@@ -27,6 +27,58 @@ const SURAH_NAMES = {
   111:"Al-Masad",112:"Al-Ikhlas",113:"Al-Falaq",114:"An-Nas"
 };
 
+// ── Arabic transliteration (fallback when not stored in DB) ──────────────────
+const AR_MAP = {
+  'ا':'a','أ':'a','إ':'i','آ':'aa','ب':'b','ت':'t','ث':'th','ج':'j','ح':'h',
+  'خ':'kh','د':'d','ذ':'dh','ر':'r','ز':'z','س':'s','ش':'sh','ص':'s',
+  'ض':'d','ط':'t','ظ':'z','ع':"'",'غ':'gh','ف':'f','ق':'q','ك':'k',
+  'ل':'l','م':'m','ن':'n','ه':'h','و':'w','ي':'y','ى':'a','ة':'a',
+  'ئ':'y','ؤ':'w',
+  'َ':'a','ِ':'i','ُ':'u','ً':'an','ٍ':'in','ٌ':'un','ّ':'','ْ':'',
+};
+function arabicToTranslit(text) {
+  if (!text) return "";
+  let result = "";
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch.charCodeAt(0) < 0x0600 || ch.charCodeAt(0) > 0x06FF) continue;
+    result += AR_MAP[ch] || "";
+  }
+  return result.replace(/(.)+/g, (m,c) => ['a','i','u'].includes(c) ? c+c : c).trim();
+}
+
+// ── Leaderboard helpers ───────────────────────────────────────────────────────
+function getCurrentMonth() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+}
+
+async function recordLeaderboardEvent(userName, field, increment = 1) {
+  if (!userName) return;
+  const month = getCurrentMonth();
+  const POINTS = { words_added: 1, quizzes_completed: 2 };
+  const { data: existing } = await supabase
+    .from("leaderboard")
+    .select("*")
+    .eq("user_name", userName)
+    .eq("month", month)
+    .single();
+  if (existing) {
+    await supabase.from("leaderboard").update({
+      [field]: (existing[field] || 0) + increment,
+      points: existing.points + (POINTS[field] || 0) * increment,
+      updated_at: new Date().toISOString(),
+    }).eq("id", existing.id);
+  } else {
+    await supabase.from("leaderboard").insert([{
+      user_name: userName, month,
+      words_added: field === "words_added" ? increment : 0,
+      quizzes_completed: field === "quizzes_completed" ? increment : 0,
+      points: (POINTS[field] || 0) * increment,
+    }]);
+  }
+}
+
 function shuffle(arr) {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
@@ -172,6 +224,7 @@ export default function App() {
       showToast(`"${w.arabic}" added! ✓`);
       setSelectedWordIdx(null);
       await loadWords();
+      recordLeaderboardEvent(wordAddedBy.trim() || userName, "words_added");
     } else showToast("Error saving word");
     setSavingWord(false);
   };
@@ -214,7 +267,10 @@ export default function App() {
     const newAnswers = [...answers, { word: q.word, selected: opt, correct: q.correct, isCorrect }];
     setAnswers(newAnswers);
     setTimeout(() => {
-      if (qIndex + 1 >= questions.length) setQuizDone(true);
+      if (qIndex + 1 >= questions.length) {
+        setQuizDone(true);
+        recordLeaderboardEvent(userName, "quizzes_completed");
+      }
       else { setQIndex(i => i + 1); setSelected(null); }
     }, 900);
   };
@@ -266,7 +322,7 @@ export default function App() {
 
         {words === null && <div className="loading">Loading shared vocabulary…</div>}
 
-        {words !== null && tab === "list" && <WordList words={words} onDelete={handleDelete} userName={userName} />}
+        {words !== null && tab === "list" && <WordList words={words} onDelete={handleDelete} userName={userName} showLeaderboard={true} />}
 
         {words !== null && tab === "verse" && (
           <div>
@@ -402,7 +458,7 @@ export default function App() {
 }
 
 // ── Word List ─────────────────────────────────────────────────────────────────
-function WordList({ words, onDelete, userName }) {
+function WordList({ words, onDelete, userName, showLeaderboard }) {
   const [search, setSearch] = useState("");
   const [dayFilter, setDayFilter] = useState("all");
   const [customDays, setCustomDays] = useState("");
@@ -428,6 +484,7 @@ function WordList({ words, onDelete, userName }) {
 
   return (
     <div>
+      {showLeaderboard && <Leaderboard userName={userName} />}
       <div className="list-header">
         <h2>✦ All Words</h2>
         <span className="count-badge">{filtered.length} / {words.length}</span>
@@ -459,19 +516,87 @@ function WordList({ words, onDelete, userName }) {
         <div className="word-grid">
           {filtered.map(w => (
             <div key={w.id} className="word-card">
-              <div className="arabic-text">{w.arabic}</div>
+              <div className="arabic-text">
+                {w.arabic}
+                <div className="arabic-translit">{w.transliteration || arabicToTranslit(w.arabic)}</div>
+              </div>
               <div className="word-info">
                 <div className="word-meaning">{w.meaning}</div>
                 <div className="word-meta">
                   {w.root && <span className="meta-chip root">Root: {w.root}</span>}
                   {w.surah && <span className="meta-chip">{w.surah}</span>}
-                  {w.added_by && <span className="meta-chip added-by">by {w.added_by}</span>}
-                  {w.created_at && <span className="meta-chip">{new Date(w.created_at).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</span>}
                 </div>
               </div>
               <button className="delete-btn" onClick={() => onDelete(w.id)} title="Remove">✕</button>
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Leaderboard Widget ───────────────────────────────────────────────────────
+function Leaderboard({ userName }) {
+  const [open, setOpen] = useState(true);
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const month = getCurrentMonth();
+  const monthLabel = new Date().toLocaleString("en-US", { month: "long", year: "numeric" });
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const { data: rows } = await supabase
+      .from("leaderboard").select("*")
+      .eq("month", month).order("points", { ascending: false });
+    setData(rows || []);
+    setLoading(false);
+  }, [month]);
+
+  useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    const channel = supabase.channel("lb-changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "leaderboard" }, () => load())
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, [load]);
+
+  const medals = ["🥇","🥈","🥉"];
+
+  return (
+    <div className="lb-widget">
+      <button className="lb-header" onClick={() => setOpen(o => !o)}>
+        <span className="lb-title">🏆 Leaderboard — {monthLabel}</span>
+        <span className="lb-toggle">{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <div className="lb-body">
+          {loading ? (
+            <div className="lb-empty">Loading…</div>
+          ) : data.length === 0 ? (
+            <div className="lb-empty">No scores yet this month — add words and take quizzes to earn points!</div>
+          ) : (
+            <>
+              <div className="lb-rows">
+                {data.map((row, i) => {
+                  const isMe = row.user_name === userName;
+                  return (
+                    <div key={row.id} className={`lb-row ${isMe?"lb-row-me":""}`}>
+                      <span className="lb-rank">{medals[i] || `#${i+1}`}</span>
+                      <span className="lb-name">{row.user_name}{isMe && <span className="lb-you"> (you)</span>}</span>
+                      <div className="lb-breakdown">
+                        <span title="Words added">📖 {row.words_added}</span>
+                        <span title="Quizzes completed">🌙 {row.quizzes_completed}</span>
+                      </div>
+                      <span className="lb-points">{row.points} pts</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="lb-legend">📖 1pt per word added &nbsp;·&nbsp; 🌙 2pts per quiz completed</div>
+            </>
+          )}
         </div>
       )}
     </div>
