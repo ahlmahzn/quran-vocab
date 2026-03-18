@@ -538,7 +538,7 @@ function WordList({ words, onDelete, userName, showLeaderboard }) {
                   {w.root && <span className="meta-chip root">Root: {w.root}</span>}
                   {w.surah && <span className="meta-chip">{w.surah}</span>}
 
-                  {w.created_at && <span className="meta-chip">{new Date(w.created_at).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</span>}
+
                 </div>
               </div>
               <button className="delete-btn" onClick={() => onDelete(w.id)} title="Remove">✕</button>
@@ -694,7 +694,7 @@ function Games({ words, userName, onScore }) {
           <div className="game-icon">⚡</div>
           <div className="game-title">Speed Round</div>
           <div className="game-desc">Words flash by fast — pick the meaning before the timer runs out or lose a life!</div>
-          <div className="game-min">4+ words</div>
+          <div className="game-min">3+ words</div>
         </button>
         <button className="game-card" onClick={() => verseWords.length >= 3 && setGame("verse")} disabled={verseWords.length < 3}>
           <div className="game-icon">🕌</div>
@@ -784,7 +784,7 @@ function FlashcardGame({ words, onBack, userName, onScore }) {
           <div className="flashcard-back">
             <div className="fc-label">Meaning</div>
             <div className="fc-meaning">{card.meaning}</div>
-            {card.added_by && <div className="fc-surah">added by {card.added_by}</div>}
+
           </div>
         </div>
       </div>
@@ -1112,7 +1112,7 @@ function CompleteTheVerse({ words, verseWords, onBack, userName, onScore }) {
   }, []);
 
   const submit = () => {
-    if (!selArabic || !selMeaning) return;
+    if (!selArabic || !selMeaning || !rounds) return;
     const round = rounds[index];
     const bothCorrect = selArabic === round.word.arabic && selMeaning === round.word.meaning;
     if (bothCorrect) setScore(s => s + 1);
@@ -1129,7 +1129,7 @@ function CompleteTheVerse({ words, verseWords, onBack, userName, onScore }) {
   if (!rounds || rounds.length === 0) return <div className="empty"><div className="empty-icon">🕌</div><p>Not enough words with valid verse references to play.</p><div style={{marginTop:20}}><button className="back-btn" onClick={onBack}>← Back</button></div></div>;
 
   useEffect(() => {
-    if (done && userName && onScore) {
+    if (done && userName && onScore && rounds) {
       onScore(userName, "quizzes_completed");
       if (score === rounds.length) onScore(userName, "perfect_scores");
     }
@@ -1137,13 +1137,14 @@ function CompleteTheVerse({ words, verseWords, onBack, userName, onScore }) {
 
   if (done) return (
     <div className="results">
-      <div className="score-circle"><div className="score-number">{score}/{rounds.length}</div></div>
+      <div className="score-circle"><div className="score-number">{score}/{rounds ? rounds.length : 0}</div></div>
       <h2>{score === rounds.length ? "Perfect! ماشاء الله" : score >= rounds.length*0.8 ? "Excellent! 🕌" : score >= rounds.length*0.6 ? "Good effort!" : "Keep reviewing!"}</h2>
       <p>{score} of {rounds.length} verses completed</p>
       <div className="btn-row" style={{marginTop:24}}><button className="retry-btn" onClick={onBack}>Back to Games</button></div>
     </div>
   );
 
+  if (!rounds || !rounds[index]) return null;
   const round = rounds[index];
   const arabicCorrect = submitted && selArabic === round.word.arabic;
   const meaningCorrect = submitted && selMeaning === round.word.meaning;
